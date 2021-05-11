@@ -202,6 +202,13 @@ function plogpdf(circ::Circuit, x::AbstractVector{<:Real})::Float64
   values = Array{Float64}(undef, length(circ))
   return plogpdf!(values, circ, layers(circ), x)
 end
+@inline function plogpdf(circ::Circuit, X::AbstractMatrix{<:Real})::Float64
+  s = 0.0
+  @inbounds for i ∈ 1:size(X)[1]
+    s += plogpdf(circ, view(X, i, :))
+  end
+  return s
+end
 export plogpdf
 
 """
