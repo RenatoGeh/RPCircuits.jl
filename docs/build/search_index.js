@@ -1,0 +1,3 @@
+var documenterSearchIndex = {"docs":
+[{"location":"index.html#RPCircuits.jl-Documentation","page":"Home","title":"RPCircuits.jl Documentation","text":"","category":"section"},{"location":"index.html","page":"Home","title":"Home","text":"","category":"page"},{"location":"index.html#API","page":"Home","title":"API","text":"","category":"section"},{"location":"index.html","page":"Home","title":"Home","text":"Modules = [RPCircuits]\nOrder = [:type, :constant, :function, :macro, :module]","category":"page"},{"location":"index.html#Index","page":"Home","title":"Index","text":"","category":"section"},{"location":"index.html","page":"Home","title":"Home","text":"","category":"page"}]
+}
