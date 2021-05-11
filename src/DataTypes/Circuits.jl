@@ -1,3 +1,6 @@
+const Circuit = AbstractVector{<:Node}
+export Circuit
+
 """
 Implements a Circuit.
 
@@ -24,9 +27,6 @@ julia > c = Circuit([
 ])
 ```
 """
-const Circuit = AbstractVector{<:Node}
-export Circuit
-
 @inline Circuit(N::AbstractVector{<:Node}; as_ref::Bool = false)::Circuit = as_ref ? N : copy(N)
 
 """

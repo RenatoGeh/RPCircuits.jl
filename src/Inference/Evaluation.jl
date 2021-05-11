@@ -13,11 +13,10 @@ Summed-out variables are represented as `NaN`s.
 
 # Examples
 
-To compute the probability of ``P(b=1)`` using circ `S`, use
+To compute the probability of `P(b=1)` using circ `S`, use
 
 ```@example
-S =
-  Circuit(IOBuffer("1 + 2 0.2 3 0.5 4 0.3\n2 * 5 7\n3 * 5 8\n4 * 6 8\n5 categorical 1 0.6 0.4\n6 categorical 1 0.1 0.9\n7 categorical 2 0.3 0.7\n8 categorical 2 0.8 0.2"));
+S = Circuit(IOBuffer("1 + 2 0.2 3 0.5 4 0.3\n2 * 5 7\n3 * 5 8\n4 * 6 8\n5 categorical 1 0.6 0.4\n6 categorical 1 0.1 0.9\n7 categorical 2 0.3 0.7\n8 categorical 2 0.8 0.2"));
 println(S([NaN, 2]))
 println(S(NaN, 2))
 ```
@@ -91,11 +90,10 @@ Evaluates the circuit `circ` in log domain at configuration `x`.
 
 # Examples
 
-To compute the probability of ``P(b=1)`` using circ `S`, use
+To compute the probability of `P(b=1)` using circ `S`, use
 
 ```@example
-S =
-  Circuit(IOBuffer("1 + 2 0.2 3 0.5 4 0.3\n2 * 5 7\n3 * 5 8\n4 * 6 8\n5 categorical 1 0.6 0.4\n6 categorical 1 0.1 0.9\n7 categorical 2 0.3 0.7\n8 categorical 2 0.8 0.2"));
+S = Circuit(IOBuffer("1 + 2 0.2 3 0.5 4 0.3\n2 * 5 7\n3 * 5 8\n4 * 6 8\n5 categorical 1 0.6 0.4\n6 categorical 1 0.1 0.9\n7 categorical 2 0.3 0.7\n8 categorical 2 0.8 0.2"));
 logpdf(S, [NaN, 2])
 ```
 """
