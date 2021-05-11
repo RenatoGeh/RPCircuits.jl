@@ -45,11 +45,6 @@ struct Indicator <: Leaf
 end
 export Indicator
 
-"""
-    Indicator(x::Vector{<:Real})::Float64
-
-Evaluates indicator function at given configuration x.
-"""
 function (n::Indicator)(x::AbstractVector{<:Real})::Float64
   return isnan(x[n.scope]) ? 1.0 : n.value ≈ x[n.scope] ? 1.0 : 0.0
 end
@@ -63,9 +58,6 @@ struct Categorical <: Leaf
 end
 export Categorical
 
-"""
-Evaluates categorical distribution at given configuration
-"""
 function (n::Categorical)(x::AbstractVector{<:Real})::Float64
   return isnan(x[n.scope]) ? 1.0 : n.values[Int(x[n.scope])]
 end
@@ -80,9 +72,6 @@ mutable struct Gaussian <: Leaf
 end
 export Gaussian
 
-"""
-Evaluates Gaussian distribution at given configuration
-"""
 function (n::Gaussian)(x::AbstractVector{<:Real})::Float64
   return isnan(x[n.scope]) ? 1.0 :
          exp(-(x[n.scope] - n.mean)^2 / (2 * n.variance)) / sqrt(2 * π * n.variance)
