@@ -1,0 +1,15 @@
+[density_estimation_datasets]
+git-tree-sha1 = "1bc8564650a08d7b7a646bcaae171db096aed7a3"
+lazy = true
+
+    [[density_estimation_datasets.download]]
+    sha256 = "5d66a95037e44010502ad28ec8d6dc26f46947dc88e962633b7de54e614b1a47"
+    url = "https://github.com/UCLA-StarAI/Density-Estimation-Datasets/archive/v1.0.1.tar.gz"
+
+[zoo]
+git-tree-sha1 = "c257d99341adf949ae69f6b65436bbac0c1d0dc8"
+lazy = true
+
+    [[zoo.download]]
+    sha256 = "632980cfd6ca3d2757fa14206f6f49cbf7ced5c9a2a84556a33c545643c6d61a"
+    url = "https://www.ime.usp.br/~renatolg/rpc/zoo.tar.gz"

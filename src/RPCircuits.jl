@@ -5,7 +5,7 @@ include.([
   "Inference/Inference.jl",
   "Learning/Learning.jl",
   "Utils.jl",
-  "IO.jl",
+  "IO/IO.jl",
 ])
 
 end # module

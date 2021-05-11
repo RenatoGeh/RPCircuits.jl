@@ -2,9 +2,9 @@
   using DataFrames
   using CSV
 
-  C = Circuit(normpath("$(@__DIR__)/../assets/nltcs.spn"))
+  C = Circuit(zoo_spn("nltcs"))
 
-  T_df = DataFrame(CSV.File(normpath("$(@__DIR__)/../assets/nltcs.test.csv")))
+  _, _, T_df = twenty_datasets("nltcs")
   T = Matrix{Float64}(T_df) .+ 1
 
   r = -19582.020235794218
