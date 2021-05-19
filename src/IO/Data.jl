@@ -14,7 +14,7 @@ const twenty_dataset_names = [
 Load a given dataset from the density estimation datasets. Automatically downloads the files as julia Artifacts.
 See https://github.com/UCLA-StarAI/Density-Estimation-Datasets for a list of avaialble datasets.
 """
-function twenty_datasets(name::String; as_df::Bool = false)::Union{Tuple{DataFrame, DataFrame, DataFrame}, Tuple{Matrix, Matrix, Matrix}}
+function twenty_datasets(name::String; as_df::Bool = true)::Union{Tuple{DataFrame, DataFrame, DataFrame}, Tuple{Matrix, Matrix, Matrix}}
   @assert in(name, twenty_dataset_names)
   data_dir = artifact"density_estimation_datasets"
   function load(type::String)::Union{DataFrame, Matrix}

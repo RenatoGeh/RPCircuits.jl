@@ -4,7 +4,7 @@
 
   C = Circuit(zoo_spn("nltcs"))
 
-  _, _, T_df = twenty_datasets("nltcs")
+  _, _, T_df = twenty_datasets("nltcs"; as_df = false)
   T = Matrix{Float64}(T_df) .+ 1
 
   r = -19582.020235794218

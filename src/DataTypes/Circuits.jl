@@ -1,3 +1,8 @@
+using DataFrames
+
+const Data = Union{AbstractMatrix{<:Real}, AbstractDataFrame}
+const Example = Union{AbstractVector{<:Real}, DataFrameRow}
+
 const Circuit = AbstractVector{<:Node}
 export Circuit
 
@@ -15,7 +20,7 @@ nodes[end] is a leaf.
 # Examples
 
 ```@example
-julia > c = Circuit([
+c = Circuit([
   Sum([2, 3, 4], [0.2, 0.5, 0.3]),
   Product([5, 7]),
   Product([5, 8]),
@@ -128,13 +133,14 @@ export nodes
 """
 Select nodes by topology
 """
-@inline leaves(c::Circuit) = filter(n -> isa(n, Leaf), nodes(c))
-@inline sums(c::Circuit) = filter(n -> isa(n, Sum), nodes(c))
-@inline products(c::Circuit) = filter(n -> isa(n, Product), nodes(c))
+@inline leaves(c::Circuit) = filter(n -> isa(n, Leaf), c)
+@inline sums(c::Circuit) = filter(n -> isa(n, Sum), c)
+@inline products(c::Circuit) = filter(n -> isa(n, Product), c)
+@inline projections(c::Circuit) = filter(n -> isa(n, Projection), c)
 @inline root(c::Circuit) = @inbounds c[1]
 #TODO #variables(c::Circuit) = collect(1:c._numvars)
 @inline children(c::Circuit, n) = @inbounds c[n].children
-export leaves, sums, products, root
+export leaves, sums, products, root, projections
 
 """
 Return vector of weights associate to outgoing edges of (sum) node n.

@@ -4,26 +4,31 @@ Node Data Structures
 Implement a labeled sparse matrix.
 """
 abstract type Node end
+abstract type Inner <: Node end
 
 """
 Sum node data type
 """
-struct Sum <: Node
+struct Sum <: Inner
   children::Vector{UInt}
   weights::Vector{Float64}
   # Sum() = new(Vector{UInt}(),Vector{Float64}())
   # Sum(children::Vector{<:Integer},weights::Vector{Float64}) = new(children,weights)
+  Sum(ch::Vector{<:Integer}, w::Vector{Float64}) = new(ch, w)
+  Sum(n::Int) = new(Vector{UInt}(undef, n), Vector{Float64}(undef, n))
 end
 export Sum
 
 """
 Product node data type
 """
-struct Product <: Node
+struct Product <: Inner
   children::Vector{UInt}
   #Product() = new(Vector{UInt}())
   #Product(children::Vector{<:Integer}) = new(children)
   #Product(children) = new(children)
+  Product(ch::Vector{<:Integer}) = new(ch)
+  Product(n::Int) = new(Vector{UInt}(undef, n))
 end
 export Product
 
@@ -47,6 +52,16 @@ export Indicator
 
 function (n::Indicator)(x::AbstractVector{<:Real})::Float64
   return isnan(x[n.scope]) ? 1.0 : n.value ≈ x[n.scope] ? 1.0 : 0.0
+end
+
+"""
+Projection Node.
+"""
+struct Projection <: Inner
+  pos::UInt
+  neg::UInt
+  λ::Float64
+  hyperplane::Function
 end
 
 """
@@ -76,6 +91,18 @@ function (n::Gaussian)(x::AbstractVector{<:Real})::Float64
   return isnan(x[n.scope]) ? 1.0 :
          exp(-(x[n.scope] - n.mean)^2 / (2 * n.variance)) / sqrt(2 * π * n.variance)
 end
+
+"""
+Is this an inner node?
+"""
+@inline isinner(n::Node) = isa(n, Inner)
+export isinner
+
+"""
+Is this a projection node?
+"""
+@inline isproj(n::Node) = isa(n, Projection)
+export isproj
 
 """
 Is this a leaf node?
@@ -108,6 +135,7 @@ Evaluates leaf `node` at the given `value` in log domain.
 @inline logpdf(n::Categorical, value::Float64) = isnan(value) ? 0.0 : logpdf(n, Int(value))
 @inline logpdf(n::Gaussian, value::Float64)::Float64 =
   isnan(value) ? 0.0 : (-(value - n.mean)^2 / (2 * n.variance)) - log(2 * π * n.variance) / 2
+@inline logpdf(n::Projection, value::AbstractVector{<:Real}) = n.hyperplane(value) == n.value ? 0.0 : -Inf
 export logpdf
 
 """

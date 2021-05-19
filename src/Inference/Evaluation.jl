@@ -21,12 +21,8 @@ println(S([NaN, 2]))
 println(S(NaN, 2))
 ```
 """
-function (circ::Circuit)(x::AbstractVector{<:Real})
-  return exp(logpdf(circ, x))
-end
-function (circ::Circuit)(x...)
-  return exp(logpdf(circ, [x...]))
-end
+(circ::Circuit)(x::Example) = exp(logpdf(circ, x))
+(circ::Circuit)(x...) = exp(logpdf(circ, [x...]))
 
 """
 logpdf(circ, X)
@@ -40,7 +36,7 @@ computations if `JULIA_NUM_THREADS > 1`.
   - `X`: matrix of values of variables (integers or reals). Summed-out variables are represented as
     `NaN`s.
 """
-function logpdf(circ::Circuit, X::AbstractMatrix{<:Real})::Float64
+function logpdf(circ::Circuit, X::Data)::Float64
   # single-threaded version
   if Threads.nthreads() == 1
     values = Array{Float64}(undef, length(circ))
@@ -130,8 +126,19 @@ function logpdf!(values::AbstractVector{Float64}, circ::Circuit, x::AbstractVect
         # ensure exp in only computed on nonpositive arguments (avoid overflow)
         lval += exp(values[j] - m) * node.weights[k]
       end
+      # println("m: ", m, ", lval: ", lval)
+      # println("  values: ", values[node.children])
+      # println("  weights: ", node.weights)
       # if something went wrong (e.g. incoming value is NaN or Inf) return -Inf
       values[i] = isfinite(lval) ? m + log(lval) : -Inf
+    elseif isproj(node)
+      values[i] = node.hyperplane(x) ? log(node.λ) + values[node.pos] : log(1-node.λ) + values[node.neg]
+      if isnan(values[i])
+        println("Node: ", i)
+        println("  pos: ", node.pos, ", neg: ", node.neg)
+        println("  pos_val: ", values[node.pos], ", neg_val: ", values[node.neg])
+        println("  λ = ", node.λ, ", activated? ", node.hyperplane(x) ? "pos" : "neg")
+      end
     else # is a leaf node
       values[i] = logpdf(node, x[node.scope])
     end

@@ -17,6 +17,8 @@ function Base.show(io::IO, n::Product)
   end
 end
 
+Base.show(io::IO, p::Projection) =print(io, "⟂ $(p.pos) $(p.λ) $(p.neg) $(1-p.λ)")
+
 function Base.show(io::IO, n::Indicator)
   return print(io, "indicator $(n.scope) $(n.value)")
 end
@@ -29,7 +31,7 @@ function Base.show(io::IO, n::Categorical)
 end
 
 function Base.show(io::IO, n::Gaussian)
-  return print(io, "indicator $(n.scope) $(n.mean) $(n.variance)")
+  return print(io, "gaussian $(n.scope) $(n.mean) $(n.variance)")
 end
 
 """
@@ -38,8 +40,14 @@ summary(io::IO, circ::Circuit)
 Print out information about the network `circ` to stream `io`
 """
 function Base.summary(io::IO, circ::Circuit)
-  len, lensum, lenprod, lenleaves =
-    length(circ), length(sums(circ)), length(products(circ)), length(leaves(circ))
+  len = length(circ)
+  lensum, lenprod, lenproj, lenleaves = 0, 0, 0, 0
+  for i ∈ 1:len
+    if issum(circ[i]) lensum += 1
+    elseif isprod(circ[i]) lenprod += 1
+    elseif isproj(circ[i]) lenproj += 1
+    else lenleaves += 1 end
+  end
   lenvars = length(scope(circ))
   return print(
     io,
@@ -52,6 +60,9 @@ function Base.summary(io::IO, circ::Circuit)
     ", ",
     lenprod,
     (lenprod == 1 ? " product" : " products"),
+    ", ",
+    lenproj,
+    (lenproj == 1 ? " projection" : " projections"),
     ", ",
     lenleaves,
     (lenleaves == 1 ? " leaf" : " leaves"),
