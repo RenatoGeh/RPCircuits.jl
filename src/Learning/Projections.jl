@@ -39,10 +39,10 @@ function max_rule(S::AbstractMatrix{<:Real}, D::AbstractMatrix{Float64})::Functi
   v = randunit(m)
   x = rand(1:n)
   y = farthest_from(D, x)
-  δ = ((rand() * 2 - 1) * 2 * norm(S[x,:] - S[y,:])) / m
+  δ = ((rand() * 2 - 1) * 2 * norm(S[x, :] - S[y, :])) / m
   Z = Vector{Float64}(undef, n)
   @inbounds for i in 1:n
-    Z[i] = dot(S[i,:], v)
+    Z[i] = dot(S[i, :], v)
   end
   μ = median(Z) + δ
   return i::AbstractVector{<:Real} -> dot(i, v) <= μ
@@ -79,20 +79,27 @@ end
 Learns a Random Projection Circuit by sampling `n_projs` projections of type `t_proj` (either
 `:mean` or `:max`), with constant `c` when `t_proj = :mean`.
 """
-function learn_projections(S::AbstractMatrix{<:Real}; c::Float64 = 1.0, n_projs::Int = 3,
-    t_proj::Symbol = :max, max_height::Int = 10, min_examples = 5)::Circuit
+function learn_projections(
+  S::AbstractMatrix{<:Real};
+  c::Float64 = 1.0,
+  n_projs::Int = 3,
+  t_proj::Symbol = :max,
+  max_height::Int = 10,
+  min_examples::Int = 5,
+  cats::Vector{Int} = Int[],
+)::Circuit
   n = size(S)[1]
   C = Vector{Node}()
   D = Matrix{Float64}(undef, n, n)
-  Threads.@threads for i ∈ 1:n
-    for j ∈ 1:n
+  Threads.@threads for i in 1:n
+    for j in 1:n
       @inbounds D[i, j] = i == j ? 0 : norm(S[i, :] - S[j, :])
     end
   end
   if t_proj == :mean
-    learn_projections!(C, S, D, n_projs, max_height, min_examples, (x, y) -> mean_rule(x, y, c))
+    learn_projections!(C, S, D, n_projs, max_height, min_examples, (x, y) -> mean_rule(x, y, c), BitSet(cats))
   else
-    learn_projections!(C, S, D, n_projs, max_height, min_examples, max_rule)
+    learn_projections!(C, S, D, n_projs, max_height, min_examples, max_rule, BitSet(cats))
   end
   return Circuit(C; as_ref = true)
 end
@@ -106,6 +113,7 @@ function learn_projections!(
   max_height::Int,
   min_examples::Int,
   t_rule::Function,
+  cats::BitSet,
 )
   n_count = 1
   n_height = 0
@@ -117,18 +125,24 @@ function learn_projections!(
     n_height += 1
     push!(C, Σ)
     Ch = Σ.children
-    @simd for i ∈ 1:n_projs @inbounds Σ.weights[i] = rand() end
+    @simd for i in 1:n_projs
+      @inbounds Σ.weights[i] = rand()
+    end
     s = sum(Σ.weights)
-    @simd for i ∈ 1:n_projs @inbounds Σ.weights[i] /= s end
-    for i ∈ 1:n_projs
+    @simd for i in 1:n_projs
+      @inbounds Σ.weights[i] /= s
+    end
+    for i in 1:n_projs
       R = t_rule(data, dists)
       λ = 0
       I, J = Vector{Int}(), Vector{Int}()
-      for (j, x) ∈ enumerate(eachrow(data))
+      for (j, x) in enumerate(eachrow(data))
         if R(x)
           λ += 1
           push!(I, j)
-        else push!(J, j) end
+        else
+          push!(J, j)
+        end
       end
       n_count += 1
       factorize_pos_sub = (n_height > max_height) || (length(I) < min_examples)
@@ -146,8 +160,12 @@ function learn_projections!(
         μ = mean(pos_data; dims = 1)
         σ = std(pos_data; dims = 1)
         # println("m, n = ", m, ", ", n, "\n  I, J = ", length(I), ", ", length(J))
-        for j ∈ 1:n
-          push!(C, Gaussian(j, μ[j], σ[j]))
+        for j in 1:n
+          if j ∈ cats
+            push!(C, Categorical(j, bincount(pos_data[:,j], 10)))
+          else
+            push!(C, Gaussian(j, μ[j], σ[j]))
+          end
           n_count += 1
           pos_sub.children[j] = n_count
         end
@@ -160,8 +178,12 @@ function learn_projections!(
         σ = std(neg_data; dims = 1)
         # println("-: ", size(neg_data), "+: ", size(pos_data))
         # println("μ: ", μ, ", σ: ", σ)
-        for j ∈ 1:n
-          push!(C, Gaussian(j, μ[j], σ[j]))
+        for j in 1:n
+          if j ∈ cats
+            push!(C, Categorical(j, bincount(neg_data[:,j], 10)))
+          else
+            push!(C, Gaussian(j, μ[j], σ[j]))
+          end
           n_count += 1
           neg_sub.children[j] = n_count
         end

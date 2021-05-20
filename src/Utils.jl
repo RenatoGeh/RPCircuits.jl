@@ -50,3 +50,15 @@ function sum_all_but(x, i)
   x[i] += 1
   return s
 end
+
+"""
+Truncate to `Integer`s and count how many are in each bin, returning the resulting probabilities.
+"""
+function bincount(Y::AbstractVector{<:Real}, n::Int)::Vector{Float64}
+  C = Vector{Int}(undef, n)
+  for i ∈ 1:length(Y)
+    C[convert(Int, Y[i])] += 1
+  end
+  C /= n
+  return C
+end

@@ -1,6 +1,8 @@
 using DataFrames
 using CSV
 using LazyArtifacts
+using MLDatasets
+using Images
 
 const twenty_dataset_names = [
         "accidents", "ad", "baudio", "bbc", "bnetflix", "book", "c20ng", "cr52", "cwebkb",
@@ -36,3 +38,32 @@ function twenty_datasets(name::String; as_df::Bool = true)::Union{Tuple{DataFram
   return train, valid, test
 end
 export twenty_datasets
+
+"""
+MNIST 3D `Array` to regular matrix.
+"""
+function mnist()::Tuple{Matrix{Float64}, Matrix{Float64}}
+  X, Y = MNIST.traindata()
+  d, _, n = size(X)
+  m = d*d
+  R = Matrix{Float64}(undef, n, m+1)
+  Threads.@threads for i ∈ 1:n
+    R[i,1:end-1] .= reshape(X[:,:,i], :)
+    R[i,end] = Y[i]
+  end
+  X, Y = MNIST.testdata()
+  n = size(X)[3]
+  T = Matrix{Float64}(undef, n, m+1)
+  Threads.@threads for i ∈ 1:n
+    T[i,1:end-1] .= reshape(X[:,:,i], :)
+    T[i,end] = Y[i]
+  end
+  return R, T
+end
+export mnist
+
+"""
+Returns an MNIST instance in image format.
+"""
+mnist_img(X::AbstractVector{Float64}) = (MNIST.convert2image(reshape(X[1:end-1], 28, 28)), X[end])
+export mnist_img
