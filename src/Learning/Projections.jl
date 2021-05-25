@@ -206,9 +206,17 @@ function learn_projections!(
         end
         # println("m, n = ", m, ", ", n, "\n  I, J = ", length(I), ", ", length(J))
         for j in 1:n
-          push!(C, binarize ? Bernoulli(j, θ[j]) : Gaussian(j, μ[j], σ[j]))
           n_count += 1
           pos.children[j] = n_count
+          if binarize
+            ⊥ = Indicator(j, 0)
+            ⊤ = Indicator(j, 1)
+            B = Sum([n_count+1, n_count+2], [1-θ[j], θ[j]])
+            append!(C, (B, ⊥, ⊤))
+            n_count += 2
+          else
+            push!(C, Gaussian(j, μ[j], σ[j]))
+          end
         end
       else
         pos_dists = view(dists, I, I)
@@ -224,9 +232,17 @@ function learn_projections!(
         # println("-: ", size(neg_data), "+: ", size(pos_data))
         # println("μ: ", μ, ", σ: ", σ)
         for j in 1:n
-          push!(C, binarize ? Bernoulli(j, θ[j]) : Gaussian(j, μ[j], σ[j]))
           n_count += 1
           neg.children[j] = n_count
+          if binarize
+            ⊥ = Indicator(j, 0)
+            ⊤ = Indicator(j, 1)
+            B = Sum([n_count+1, n_count+2], [1-θ[j], θ[j]])
+            append!(C, (B, ⊥, ⊤))
+            n_count += 2
+          else
+            push!(C, Gaussian(j, μ[j], σ[j]))
+          end
         end
       else
         neg_dists = view(dists, J, J)
