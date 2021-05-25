@@ -352,6 +352,7 @@ NLL(circ::Circuit,data::AbstractMatrix{<:Real})
 Computes the average negative loglikelihood of a dataset `data` assigned by circ.
 """
 NLL(circ::Circuit, data::AbstractMatrix{<:Real}) = -logpdf(circ, data) / size(data, 1)
+export NLL
 
 """
 MAE(S1::Circuit,S2::Circuit,data::AbstractMatrix{<:Real})

@@ -102,9 +102,10 @@ function initialize(learner::ParameterLearner) #circ::Circuit)
     @inbounds circ[i].weights ./= sum(circ[i].weights)
     @assert sum(circ[i].weights) ≈ 1.0 "Unnormalized weight vector at node $i: $(sum(circ[i].weights)) | $(circ[i].weights)"
   end
-  gaussiannodes = filter(i -> isa(circ[i], GaussianDistribution), 1:length(circ))
+  gaussiannodes = filter(i -> isa(circ[i], Gaussian), 1:length(circ))
   for i in gaussiannodes
     @inbounds circ[i].mean = rand()
     @inbounds circ[i].variance = 1.0
   end
 end
+export initialize

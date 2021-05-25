@@ -77,6 +77,16 @@ function (n::Categorical)(x::AbstractVector{<:Real})::Float64
   return isnan(x[n.scope]) ? 1.0 : n.values[Int(x[n.scope])]
 end
 
+struct Bernoulli <: Leaf
+  scope::UInt
+  p::Float64
+end
+export Bernoulli
+
+function (n::Bernoulli)(x::AbstractVector{<:Real})::Float64
+  return isnan(x[n.scope]) ? 1.0 : Int(x[n.scope]) == 1 ? n.p : 1-n.p
+end
+
 """
 Univariate Gaussian Distribution Node
 """
@@ -136,6 +146,8 @@ Evaluates leaf `node` at the given `value` in log domain.
 @inline logpdf(n::Gaussian, value::Float64)::Float64 =
   isnan(value) ? 0.0 : (-(value - n.mean)^2 / (2 * n.variance)) - log(2 * π * n.variance) / 2
 @inline logpdf(n::Projection, value::AbstractVector{<:Real}) = n.hyperplane(value) == n.value ? 0.0 : -Inf
+@inline logpdf(n::Bernoulli, value::Integer) = value == 1 ? log(n.p) : log(1-n.p)
+@inline logpdf(n::Bernoulli, value::Float64) = isnan(value) ? 0.0 : logpdf(n, Int(value))
 export logpdf
 
 """
@@ -146,6 +158,7 @@ Returns the maximum value of the distribution
 @inline Base.maximum(n::Indicator) = 1.0
 @inline Base.maximum(n::Categorical) = Base.maximum(n.values)
 @inline Base.maximum(n::Gaussian) = 1 / sqrt(2 * π * n.variance)
+@inline Base.maximum(n::Bernoulli) = n.p < 0.5 ? 1-n.p : n.p
 
 """
     argmax(node)
@@ -155,6 +168,7 @@ Returns the value at which the distribution is maximum
 @inline Base.argmax(n::Indicator) = n.value
 @inline Base.argmax(n::Categorical) = Base.argmax(n.values)
 @inline Base.argmax(n::Gaussian) = n.mean
+@inline Base.argmax(n::Bernoulli) = n.p < 0.5 ? 0 : 1
 
 """
     scope(node)

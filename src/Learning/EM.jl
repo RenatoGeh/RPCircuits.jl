@@ -29,6 +29,7 @@ mutable struct SEM <: ParameterLearner
     0.5,
   )
 end
+export SEM
 
 """
 Verifies if algorithm has converged.
@@ -38,6 +39,7 @@ Requires at least 2 steps of optimization.
 """
 converged(learner::SEM) =
   learner.steps < 2 ? false : abs(learner.score - learner.prevscore) < learner.tolerance
+export converged
 
 # TODO: take filename os CSV File object as input and iterate over file to decreae memory footprint
 """
@@ -186,6 +188,7 @@ function update(
   learner.score = -score / numrows
   return learner.prevscore - learner.score
 end
+export update
 
 # Parameter learning by Accelerated Expectation-Maximimzation (SQUAREM)
 # RAVI VARADHAN & CHRISTOPHE ROLAND, Simple and Globally Convergent Methods for Accelerating the Convergence of Any EM Algorithm, J. Scand J Statist 2008
@@ -225,6 +228,7 @@ mutable struct SQUAREM <: ParameterLearner
     0.5,
   )
 end
+export SQUAREM
 
 """
 Verifies if algorithm has converged.
@@ -234,6 +238,7 @@ Requires at least 2 steps of optimization.
 """
 converged(learner::SQUAREM) =
   learner.steps < 2 ? false : abs(learner.score - learner.prevscore) < learner.tolerance
+export converged
 
 # TODO: take filename os CSV File object as input and iterate over file to decreae memory footprint
 """
@@ -375,3 +380,4 @@ function update(
   learner.score = -score / numrows
   return learner.prevscore - learner.score, α
 end
+export update
