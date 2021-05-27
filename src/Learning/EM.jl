@@ -150,7 +150,8 @@ function update(
     # circ[i].weights .*= 1.0-learningrate # apply update with inertia strenght given by learning rate
     # @assert sum(circ[i].weights) ≈ 1.0-learningrate "Unnormalized weight vector at node $i: $(sum(circ[i].weights)) | $(circ[i].weights)"
     # circ[i].weights .+= cache[i].weights
-    @assert sum(circ_n[i].weights) ≈ 1.0 "Unnormalized weight vector at node $i: $(sum(circ_n[i].weights)) | $(circ_n[i].weights) | $(circ_p[i].weights)"
+    circ_n[i].weights ./= sum(circ_n[i].weights)
+    # @assert sum(circ_n[i].weights) ≈ 1.0 "Unnormalized weight vector at node $i: $(sum(circ_n[i].weights)) | $(circ_n[i].weights) | $(circ_p[i].weights)"
     # for (k,j) in enumerate(circ[i].children)
     #     # circ[i].weights .*= cache[i].weights
     # Z = sum(circ[i].weights)
@@ -291,8 +292,11 @@ function update(
     end
   end
   @inbounds Threads.@threads for i in sumnodes
+    # println(θ_1[i].weights)
     θ_1[i].weights .+= smoothing / length(θ_1[i].weights) # smoothing factor to prevent degenerate probabilities
+    # println("  ", θ_1[i].weights)
     θ_1[i].weights ./= sum(θ_1[i].weights)
+    # println("    ", θ_1[i].weights)
     @assert sum(θ_1[i].weights) ≈ 1.0 "1. Unnormalized weight vector at node $i: $(sum(θ_1[i].weights)) | $(θ_1[i].weights)"
   end
   # Compute theta2 = EM_Update(theta1)
@@ -315,8 +319,11 @@ function update(
     end
   end
   @inbounds Threads.@threads for i in sumnodes
+    # println(θ_2[i].weights)
     θ_2[i].weights .+= smoothing / length(θ_2[i].weights) # smoothing factor to prevent degenerate probabilities
+    # println("  ", θ_2[i].weights)
     θ_2[i].weights ./= sum(θ_2[i].weights)
+    # println("    ", θ_2[i].weights)
     @assert sum(θ_2[i].weights) ≈ 1.0 "2. Unnormalized weight vector at node $i: $(sum(θ_2[i].weights)) | $(θ_2[i].weights)"
   end
   # Compute r, v, |r| and |v|

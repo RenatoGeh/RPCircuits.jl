@@ -207,7 +207,7 @@ function Circuit(io::IO = stdin; offset::Integer = 0)
         node = Categorical(varid, [parse(Float64, value) for value in fields[4:end]])
       elseif nodetype == 'i' || nodetype == 'l'
         varid = parse(Int, fields[3]) + offset
-        value = parse(Float64, fields[4]) + offset
+        value = parse(Float64, fields[4]) + offset - 1
         node = Indicator(varid, value)
       elseif nodetype == 'g'
         # TODO: read Gaussian leaves

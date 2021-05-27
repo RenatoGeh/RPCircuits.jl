@@ -10,18 +10,18 @@ for data_idx ∈ 1:length(datasets)
   println("Dataset: ", datasets[data_idx])
   R, V, T = twenty_datasets(datasets[data_idx]; as_df = false)
   println("Learning structure...")
-  C = learn_projections(R; t_proj = :sid, binarize = true, no_dist = true)
+  C = learn_projections(R; t_proj = :max, binarize = true, no_dist = true)
   println("Learning parameters...")
   learner = SEM(C)
-  batchsize = 500
+  batchsize = 100
   avgnll = 0.0
   runnll = 0.0
   # println("It: $(learner.steps) \t train NLL: $avgnll \t held-out NLL: $(NLL(C, V))")
   indices = shuffle!(collect(1:size(R,1)))
-  while !converged(learner) && learner.steps < 100
+  while !converged(learner) && learner.steps < 50
     sid = rand(1:(length(indices)-batchsize))
     batch = view(R, indices[sid:(sid+batchsize-1)], :)
-    η = 0.975^learner.steps #max(0.95^learner.steps, 0.3)
+    η = max(0.95^learner.steps, 0.3)
     update(learner, batch, η)
     testnll = NLL(C, V)
     batchnll = NLL(C, batch)
@@ -33,8 +33,5 @@ for data_idx ∈ 1:length(datasets)
   end
   LL[data_idx] = -NLL(C, T)
   println("LL: ", LL[data_idx])
-  println("Saving results...")
-  serialize("$(datasets[data_idx]).data", LL[data_idx])
-  println("Saving circuit...")
-  save(C, "saved/sid/$(datasets[dat_idx]).spn")
+  serialize("results/max/$(datasets[data_idx]).data", LL[data_idx])
 end

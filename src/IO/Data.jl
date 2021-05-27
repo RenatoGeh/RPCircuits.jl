@@ -5,8 +5,8 @@ using MLDatasets
 using Images
 
 const twenty_dataset_names = [
-        "accidents", "ad", "baudio", "bbc", "bnetflix", "book", "c20ng", "cr52", "cwebkb",
-        "dna", "jester", "kdd", "kosarek", "msnbc", "msweb", "nltcs", "plants", "pumsb_star", "tmovie", "tretail", 
+        "accidents", "ad", "adult", "baudio", "bbc", "bnetflix", "book", "c20ng", "cr52", "cwebkb",
+        "dna", "jester", "kdd", "kosarek", "msnbc", "mushrooms", "msweb", "nltcs", "plants", "pumsb_star", "tmovie", "tretail", 
         "binarized_mnist"
 ];
 

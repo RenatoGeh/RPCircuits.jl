@@ -25,3 +25,6 @@ assets/
 # environment.
 Manifest.toml
 test/Manifest.toml
+
+*.npy
+*.data
