@@ -1,8 +1,10 @@
 using Pkg; Pkg.activate("..")
+using Random
 using RPCircuits
 using NPZ
+using ThreadPools
 
-function learn_parameters!(C::Circuit; batchsize = 100)
+function learn_parameters!(C::Circuit, R, V; batchsize = 250)
   learner = SEM(C)
   avgnll = 0.0
   runnll = 0.0
@@ -26,24 +28,31 @@ end
 println("Loading datasets")
 R, V, T = npzread.("moons." .* ["train", "valid", "test"] .* ".npy")
 
-C_sid = learn_projections(R; min_examples = 5, max_height = 10, t_proj = :sid, binarize = false, no_dist = true)
-# learn_parameters!(C_sid)
-println("RP-SID average log-likelihood: ", -NLL(C_sid, T))
-C_sid_single = learn_projections(R; min_examples = 5, max_height = 10, n_projs = 20, t_proj = :sid, binarize = false, no_dist = true, single_mix = true)
-println("RP-SID average log-likelihood: ", -NLL(C_sid_single, T))
-
-C_max = learn_projections(R; min_examples = 5, max_height = 10, t_proj = :max, binarize = false, no_dist = true, r = 1.0)
-# learn_parameters!(C_max)
-println("RP-Max average log-likelihood: ", -NLL(C_max, T))
-C_max_single = learn_projections(R; min_examples = 5, max_height = 10, t_proj = :max, binarize = false, no_dist = true, r = 1.0, n_projs = 20, single_mix = true)
-println("RP-Max average log-likelihood: ", -NLL(C_max_single, T))
+L_f = [
+       () -> learn_projections(R; min_examples = 5, max_height = 10, t_proj = :sid, binarize = false, no_dist = true, c = 10.0),
+       () -> learn_projections(R; min_examples = 5, max_height = 100, n_projs = 30, t_proj = :sid, binarize = false, no_dist = true, single_mix = true, c = 10.0),
+       () -> learn_projections(R; min_examples = 5, max_height = 10, t_proj = :max, binarize = false, no_dist = true, r = 1.0, c = 10.0),
+       () -> learn_projections(R; min_examples = 5, max_height = 100, t_proj = :max, binarize = false, no_dist = true, r = 1.0, n_projs = 30, single_mix = true, c = 10.0),
+      ]
 
 names = ["sid", "sid_single", "max", "max_single"]
-for (C, name) ∈ zip([C_sid, C_sid_single, C_max, C_max_single], names)
+C_all = Vector{Circuit}(undef, length(names))
+@qthreads for i ∈ 1:length(C_all)
+  println("Learning structure...")
+  C = L_f[i]()
+  println("Learning parameters...")
+  learn_parameters!(C, R, V)
+  println("Average log-likelihood: ", -NLL(C, T))
+  C_all[i] = C
+end
+x_bounds, y_bounds = -1.5:0.025:2.5, -0.75:0.01:1.25
+bounds = vec([[i, j] for i in x_bounds, j in y_bounds])
+for (C, name) ∈ zip(C_all, names)
   L = leaves(C)
   n = length(L)÷2
   S = Matrix{Float64}(undef, n, 2)
   M = Matrix{Float64}(undef, n, 2)
+  println("Exporting Gaussians...")
   for i ∈ 1:n
     j = 2*(i-1)+1
     S[i,1], S[i,2] = L[j].variance, L[j+1].variance
@@ -51,4 +60,12 @@ for (C, name) ∈ zip([C_sid, C_sid_single, C_max, C_max_single], names)
   end
   npzwrite("results/moons/$(name)_mean.npy", M)
   npzwrite("results/moons/$(name)_variance.npy", S)
+  println("Exporting densities...")
+  density = Vector{Float64}(undef, length(bounds))
+  println("Computing densities...")
+  @Threads.threads for i ∈ 1:length(x_bounds)
+    density[i] = logpdf(C, bounds[i])
+  end
+  npzwrite("results/moons/$(name)_density.npy", density)
+  println(name, "... OK.")
 end

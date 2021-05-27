@@ -38,12 +38,12 @@ function learn_parameters!(C::Circuit, R::AbstractMatrix{<:Real}, V::AbstractMat
 end
 
 datasets = ["accidents"]
-configs = [[:n_projs => 10, :t_proj => :sid, :single_mix => true, :c => 0.0],
-           [:n_projs => 10, :t_proj => :sid, :single_mix => true, :c => 1.0],
-           [:n_projs => 10, :t_proj => :sid, :single_mix => true, :c => 10.0],
-           [:n_projs => 20, :t_proj => :sid, :single_mix => true, :c => 0.0],
-           [:n_projs => 20, :t_proj => :sid, :single_mix => true, :c => 1.0],
-           [:n_projs => 20, :t_proj => :sid, :single_mix => true, :c => 10.0],
+configs = [[:n_projs => 100, :t_proj => :sid, :max_height = 100, :single_mix => true, :c => 0.0],
+           [:n_projs => 100, :t_proj => :sid, :max_height = 100, :single_mix => true, :c => 1.0],
+           [:n_projs => 100, :t_proj => :sid, :max_height = 100, :single_mix => true, :c => 10.0],
+           [:n_projs => 200, :t_proj => :sid, :max_height = 100, :single_mix => true, :c => 0.0],
+           [:n_projs => 200, :t_proj => :sid, :max_height = 100, :single_mix => true, :c => 1.0],
+           [:n_projs => 200, :t_proj => :sid, :max_height = 100, :single_mix => true, :c => 10.0],
            [:n_projs => 3, :t_proj => :sid, :single_mix => false, :c => 0.0],
            [:n_projs => 3, :t_proj => :sid, :single_mix => false, :c => 1.0],
            [:n_projs => 3, :t_proj => :sid, :single_mix => false, :c => 10.0],
