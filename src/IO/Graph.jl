@@ -165,7 +165,7 @@ end
     Circuit(filename::AbstractString; offset=0)::Circuit
     Circuit(io::IO=stdin; offset=0)::Circuit
 
-Reads network from file. Assume 1-based indexing for node ids and values at indicator nodes. Set offset = 1 if these values are 0-based instead.
+Reads network from file. Assume 1-based indexing for node ids and values at indicator nodes. Set offset = 1 if these values are 0-based instead. If `ind_offset = 1`, subtract by one values for indicators.
 """
 function Circuit(filename::String; offset::Integer = 0)
   circ = open(filename) do file
@@ -174,7 +174,7 @@ function Circuit(filename::String; offset::Integer = 0)
   return circ
 end
 
-function Circuit(io::IO = stdin; offset::Integer = 0)
+function Circuit(io::IO = stdin; offset::Integer = 0, ind_offset::Integer = 0)
   # create dictionary of node_id => node (so they can be read in any order)
   nodes = Dict{UInt, Node}()
   # read and create nodes
@@ -207,7 +207,7 @@ function Circuit(io::IO = stdin; offset::Integer = 0)
         node = Categorical(varid, [parse(Float64, value) for value in fields[4:end]])
       elseif nodetype == 'i' || nodetype == 'l'
         varid = parse(Int, fields[3]) + offset
-        value = parse(Float64, fields[4]) + offset - 1
+        value = parse(Float64, fields[4]) + offset - ind_offset
         node = Indicator(varid, value)
       elseif nodetype == 'g'
         # TODO: read Gaussian leaves

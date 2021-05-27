@@ -40,22 +40,22 @@ end
 datasets = ["accidents"]
 configs = [[:n_projs => 10, :t_proj => :sid, :single_mix => true, :c => 0.0],
            [:n_projs => 10, :t_proj => :sid, :single_mix => true, :c => 1.0],
-           [:n_projs => 10, :t_proj => :sid, :single_mix => true, :c => 2.0],
+           [:n_projs => 10, :t_proj => :sid, :single_mix => true, :c => 10.0],
            [:n_projs => 20, :t_proj => :sid, :single_mix => true, :c => 0.0],
            [:n_projs => 20, :t_proj => :sid, :single_mix => true, :c => 1.0],
-           [:n_projs => 20, :t_proj => :sid, :single_mix => true, :c => 2.0],
+           [:n_projs => 20, :t_proj => :sid, :single_mix => true, :c => 10.0],
            [:n_projs => 3, :t_proj => :sid, :single_mix => false, :c => 0.0],
            [:n_projs => 3, :t_proj => :sid, :single_mix => false, :c => 1.0],
-           [:n_projs => 3, :t_proj => :sid, :single_mix => false, :c => 2.0],
+           [:n_projs => 3, :t_proj => :sid, :single_mix => false, :c => 10.0],
            [:n_projs => 5, :t_proj => :sid, :single_mix => false, :c => 0.0],
            [:n_projs => 5, :t_proj => :sid, :single_mix => false, :c => 1.0],
-           [:n_projs => 5, :t_proj => :sid, :single_mix => false, :c => 2.0],
+           [:n_projs => 5, :t_proj => :sid, :single_mix => false, :c => 10.0],
            [:n_projs => 8, :t_proj => :sid, :single_mix => false, :c => 0.0],
            [:n_projs => 8, :t_proj => :sid, :single_mix => false, :c => 1.0],
-           [:n_projs => 8, :t_proj => :sid, :single_mix => false, :c => 2.0],
+           [:n_projs => 8, :t_proj => :sid, :single_mix => false, :c => 10.0],
            [:n_projs => 10, :t_proj => :sid, :single_mix => false, :c => 0.0],
            [:n_projs => 10, :t_proj => :sid, :single_mix => false, :c => 1.0],
-           [:n_projs => 10, :t_proj => :sid, :single_mix => false, :c => 2.0],
+           [:n_projs => 10, :t_proj => :sid, :single_mix => false, :c => 10.0],
           ]
 LL = Vector{Vector{Float64}}(undef, length(datasets))
 
@@ -70,10 +70,10 @@ for data_idx ∈ 1:length(datasets)
     learn_parameters!(C, R, V; batchsize = 1000)
     LL[data_idx][i] = -NLL(C, T)
     println("LL: ", LL[data_idx])
-    println("Saving results...")
-    serialize("results/single_sid/$(datasets[data_idx])_$(i).data", LL[data_idx])
-    open("results/single_sid/$(datasets[data_idx])_$(i).txt", "w") do out write(out, string(LL[data_idx])) end
     println("Saving circuit...")
     save(C, "saved/single_sid/$(datasets[data_idx])_$(i).spn")
   end
+  println("Saving results...")
+  serialize("results/single_sid/$(datasets[data_idx]).data", LL[data_idx])
+  open("results/single_sid/$(datasets[data_idx]).txt", "w") do out write(out, string(LL[data_idx])) end
 end
