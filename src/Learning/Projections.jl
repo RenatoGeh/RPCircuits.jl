@@ -30,6 +30,37 @@ function farthest_from(D::AbstractMatrix{<:Real}, x::Int)::Int
 end
 
 """
+`select(f::Function, S::AbstractMatrix{<:Real}`
+
+Selects rows which `f` returns true, returning rows which were selected and not selected.
+"""
+function select(f::Function, S::AbstractMatrix{<:Real})
+  I, J = Vector{Int}(), Vector{Int}()
+  n = size(S, 1)
+  @inbounds for i ∈ 1:n
+    if f(S[i,:]) push!(I, i)
+    else push!(J, i) end
+  end
+  return view(S, I, :), view(S, J, :)
+end
+
+"""
+`avgdiam(S::AbstractMatrix{<:Real}, μ::Vector{<:Real})`
+
+Computes the average diameter Δ_A of a dataset given the mean of its instances.
+"""
+function avgdiam(S::AbstractMatrix{<:Real}, μ::Vector{<:Real})::Float64
+  n = size(S, 1)
+  Δ_A = 0
+  Threads.@threads for i ∈ 1:n
+    d = norm(S[i,:] - μ)
+    Δ_A += d*d
+  end
+  return 2*Δ_A/n
+end
+@inline avgdiam(S::AbstractMatrix{<:Real})::Float64 = avgdiam(S, vec(mean(S; dims = 1)))
+
+"""
 `max_rule(S::AbstractMatrix{<:Real}, D::Matrix{Float64})`
 
 Returns a random RPTree-Max rule given dataset `S` and distance matrix `D`.
@@ -47,18 +78,25 @@ function max_rule(S::AbstractMatrix{<:Real}, D::AbstractMatrix{Float64}, r::Floa
   μ = median(Z) + δ
   return i::AbstractVector{<:Real} -> dot(i, v) <= μ
 end
-function max_rule(S::AbstractMatrix{<:Real}, r::Float64)::Function
+function max_rule(S::AbstractMatrix{<:Real}, r::Float64, trials::Int)::Function
   n, m = size(S)
-  v = randunit(m)
-  x, y = rand(1:n), rand(1:n-1)
-  if x == y y = n end
-  δ = ((rand() * 2 - 1) * r * norm(S[x, :] - S[y, :])) / m
-  Z = Vector{Float64}(undef, n)
-  @inbounds for i in 1:n
-    Z[i] = dot(S[i, :], v)
+  best_diff, best_split = Inf, nothing
+  for j ∈ 1:trials
+    v = randunit(m)
+    x, y = rand(1:n), rand(1:n-1)
+    if x == y y = n end
+    δ = ((rand() * 2 - 1) * r * norm(S[x, :] - S[y, :])) / m
+    Z = Vector{Float64}(undef, n)
+    @inbounds for i in 1:n
+      Z[i] = dot(S[i, :], v)
+    end
+    μ = median(Z) + δ
+    f = i::AbstractVector{<:Real} -> dot(i, v) <= μ
+    P, Q = select(f, S)
+    d = abs(avgdiam(P)-avgdiam(Q))
+    if d < best_diff best_diff, best_split = d, f end
   end
-  μ = median(Z) + δ
-  return i::AbstractVector{<:Real} -> dot(i, v) <= μ
+  return best_split
 end
 
 """
@@ -121,39 +159,41 @@ function sid_rule(S::AbstractMatrix{<:Real}, D::AbstractMatrix{Float64}, c::Floa
   μ = median(Z)
   return x::AbstractVector{<:Real} -> norm(x - me) <= μ
 end
-function sid_rule(S::AbstractMatrix{<:Real}, c::Float64)::Function
+function sid_rule(S::AbstractMatrix{<:Real}, c::Float64, trials::Int)::Function
   n, m = size(S)
   x, y = rand(1:n), rand(1:n-1)
   if x == y y = n end
   Δ = norm(S[x,:] - S[y,:]); Δ *= Δ
   me = vec(mean(S; dims = 1))
-  Δ_A = 0
-  Threads.@threads for i ∈ 1:n
-    d = norm(S[i,:] - me)
-    Δ_A += d*d
-  end
-  Δ_A = 2*Δ_A/n
+  Δ_A = avgdiam(S, me)
   if Δ <= c*Δ_A
-    v = randunit(m)
-    a = sort!([dot(v, x) for x ∈ eachrow(S)])
-    s_μ_1, s_μ_2 = a[1]*a[1], sum(a[2:end] .* a[2:end])
-    μ_1, μ_2 = a[1], sum(a[2:end])
-    i_min, c_min = -1, Inf
-    for i ∈ 1:n-1
-      δ_1, δ_2 = μ_1/i, μ_2/(n-i)
-      p, q = s_μ_1-μ_1*δ_1, s_μ_2-μ_2*δ_2
-      c = p + q
-      if c < c_min
-        i_min, c_min = i, c
+    best_diff, best_split = Inf, nothing
+    for j ∈ 1:trials
+      v = randunit(m)
+      a = sort!([dot(v, x) for x ∈ eachrow(S)])
+      s_μ_1, s_μ_2 = a[1]*a[1], sum(a[2:end] .* a[2:end])
+      μ_1, μ_2 = a[1], sum(a[2:end])
+      i_min, c_min = -1, Inf
+      for i ∈ 1:n-1
+        δ_1, δ_2 = μ_1/i, μ_2/(n-i)
+        p, q = s_μ_1-μ_1*δ_1, s_μ_2-μ_2*δ_2
+        c = p + q
+        if c < c_min
+          i_min, c_min = i, c
+        end
+        a_i = a[i+1]
+        μ_1 += a_i
+        μ_2 -= a_i
+        s_μ_1 += a_i*a_i
+        s_μ_2 -= a_i*a_i
       end
-      a_i = a[i+1]
-      μ_1 += a_i
-      μ_2 -= a_i
-      s_μ_1 += a_i*a_i
-      s_μ_2 -= a_i*a_i
+      θ = (a[i_min]+a[i_min+1])/2
+      f = x::AbstractVector{<:Real} -> dot(v, x) <= θ
+      P, Q = select(f, S)
+      d = abs(avgdiam(P)-avgdiam(Q))
+      if d < best_diff best_diff, best_split = d, f end
     end
-    θ = (a[i_min]+a[i_min+1])/2
-    return x::AbstractVector{<:Real} -> dot(v, x) <= θ
+    return best_split
   end
   Z = Vector{Float64}(undef, n)
   @inbounds for i ∈ 1:n
@@ -179,7 +219,8 @@ function learn_projections(
   min_examples::Int = 30,
   binarize::Bool = false,
   single_mix::Bool = false,
-  no_dist::Bool = false,
+  no_dist::Bool = true,
+  trials::Int = 5,
 )::Circuit
   n, m = size(S)
   if max_height < 0 max_height = floor(Int, sqrt(m)) end
@@ -200,17 +241,9 @@ function learn_projections(
   if t_proj == :mean
     learn_func(C, S, D, n_projs, max_height, min_examples, binarize, (x, y) -> mean_rule(x, y, c))
   elseif t_proj == :max
-    if no_dist
-      learn_func(C, S, D, n_projs, max_height, min_examples, binarize, (x, y) -> max_rule(x, r))
-    else
-      learn_func(C, S, D, n_projs, max_height, min_examples, binarize, (x, y) -> max_rule(x, y, r))
-    end
+    learn_func(C, S, D, n_projs, max_height, min_examples, binarize, (x, y) -> max_rule(x, r, trials))
   else
-    if no_dist
-      learn_func(C, S, D, n_projs, max_height, min_examples, binarize, (x, y) -> sid_rule(x, c))
-    else
-      learn_func(C, S, D, n_projs, max_height, min_examples, binarize, (x, y) -> sid_rule(x, y, c))
-    end
+    learn_func(C, S, D, n_projs, max_height, min_examples, binarize, (x, y) -> sid_rule(x, c, trials))
   end
   return Circuit(C; as_ref = true)
 end
@@ -381,7 +414,7 @@ function learn_projections!(
             append!(C, (B, ⊥, ⊤))
             n_count += 2
           else
-            push!(C, Gaussian(j, μ[j], length(I) == 1 ? 0.001 : σ[j]))
+            push!(C, Gaussian(j, μ[j], length(I) == 1 ? 0.05 : σ[j]))
           end
         end
       else
@@ -407,7 +440,7 @@ function learn_projections!(
             append!(C, (B, ⊥, ⊤))
             n_count += 2
           else
-            push!(C, Gaussian(j, μ[j], length(J) == 1 ? 0.001 : σ[j]))
+            push!(C, Gaussian(j, μ[j], length(J) == 1 ? 0.05 : σ[j]))
           end
         end
       else
