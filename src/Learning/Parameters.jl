@@ -93,7 +93,7 @@ end
 """
 Random initialization of weights
 """
-function initialize(learner::ParameterLearner) #circ::Circuit)
+function initialize(learner::ParameterLearner) 
   circ = learner.circ
   sumnodes = filter(i -> isa(circ[i], Sum), 1:length(circ))
   for i in sumnodes
