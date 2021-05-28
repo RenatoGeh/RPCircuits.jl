@@ -37,25 +37,15 @@ function learn_parameters!(C::Circuit, R::AbstractMatrix{<:Real}, V::AbstractMat
   return learner
 end
 
-datasets = ["accidents"]
-configs = [[:n_projs => 100, :t_proj => :sid, :max_height = 100, :single_mix => true, :c => 0.0],
-           [:n_projs => 100, :t_proj => :sid, :max_height = 100, :single_mix => true, :c => 1.0],
-           [:n_projs => 100, :t_proj => :sid, :max_height = 100, :single_mix => true, :c => 10.0],
-           [:n_projs => 200, :t_proj => :sid, :max_height = 100, :single_mix => true, :c => 0.0],
-           [:n_projs => 200, :t_proj => :sid, :max_height = 100, :single_mix => true, :c => 1.0],
-           [:n_projs => 200, :t_proj => :sid, :max_height = 100, :single_mix => true, :c => 10.0],
+# datasets = ["accidents"]
+datasets = ["nltcs", "book", "plants", "baudio", "jester", "bnetflix", "accidents", "mushrooms",
+            "adult", "dna"]
+configs = [[:n_projs => 10, :t_proj => :sid, :max_height => 25, :single_mix => true, :c => 0.0],
+           [:n_projs => 10, :t_proj => :sid, :max_height => 25, :single_mix => true, :c => 1.0],
+           [:n_projs => 10, :t_proj => :sid, :max_height => 25, :single_mix => true, :c => 10.0],
            [:n_projs => 3, :t_proj => :sid, :single_mix => false, :c => 0.0],
            [:n_projs => 3, :t_proj => :sid, :single_mix => false, :c => 1.0],
            [:n_projs => 3, :t_proj => :sid, :single_mix => false, :c => 10.0],
-           [:n_projs => 5, :t_proj => :sid, :single_mix => false, :c => 0.0],
-           [:n_projs => 5, :t_proj => :sid, :single_mix => false, :c => 1.0],
-           [:n_projs => 5, :t_proj => :sid, :single_mix => false, :c => 10.0],
-           [:n_projs => 8, :t_proj => :sid, :single_mix => false, :c => 0.0],
-           [:n_projs => 8, :t_proj => :sid, :single_mix => false, :c => 1.0],
-           [:n_projs => 8, :t_proj => :sid, :single_mix => false, :c => 10.0],
-           [:n_projs => 10, :t_proj => :sid, :single_mix => false, :c => 0.0],
-           [:n_projs => 10, :t_proj => :sid, :single_mix => false, :c => 1.0],
-           [:n_projs => 10, :t_proj => :sid, :single_mix => false, :c => 10.0],
           ]
 LL = Vector{Vector{Float64}}(undef, length(datasets))
 
@@ -67,13 +57,13 @@ for data_idx ∈ 1:length(datasets)
     println("Learning structure...")
     C = learn_projections(R; binarize = true, no_dist = true, configs[i]...)
     println("Learning parameters...")
-    learn_parameters!(C, R, V; batchsize = 1000)
+    learn_parameters!(C, R, V; batchsize = 500)
     LL[data_idx][i] = -NLL(C, T)
     println("LL: ", LL[data_idx])
     println("Saving circuit...")
-    save(C, "saved/single_sid/$(datasets[data_idx])_$(i).spn")
+    save(C, "saved/single_sid/$(datasets[data_idx])_$(i)_2.spn")
   end
   println("Saving results...")
-  serialize("results/single_sid/$(datasets[data_idx]).data", LL[data_idx])
-  open("results/single_sid/$(datasets[data_idx]).txt", "w") do out write(out, string(LL[data_idx])) end
+  serialize("results/single_sid/$(datasets[data_idx])_2.data", LL[data_idx])
+  open("results/single_sid/$(datasets[data_idx])_2.txt", "w") do out write(out, string(LL[data_idx])) end
 end

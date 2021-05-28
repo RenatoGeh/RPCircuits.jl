@@ -25,21 +25,21 @@ function learn_parameters!(C::Circuit, R, V; batchsize = 500)
   return learner
 end
 
-D = npzread("sin_noise.npy")
+D = npzread("sin_rot.npy")
 R, V, T = D[1:end-151,:], D[end-150:end-101,:], D[end-100:end,:]
 
 println("Learning...")
 L_f = [
-       () -> learn_projections(D; n_projs = 3, min_examples = 5, max_height = 30, t_proj = :sid, binarize = false, no_dist = true, c = 10.0),
-       () -> learn_projections(D; min_examples = 5, max_height = 500, n_projs = 100, t_proj = :sid, binarize = false, no_dist = true, single_mix = true, c = 10.0),
-       () -> learn_projections(D; n_projs = 3, min_examples = 5, max_height = 30, t_proj = :max, binarize = false, no_dist = true, r = 1.0, c = 10.0),
-       () -> learn_projections(D; min_examples = 5, max_height = 500, n_projs = 100, t_proj = :max, binarize = false, no_dist = true, r = 1.0, single_mix = true, c = 10.0),
+       () -> learn_projections(D; n_projs = 3, min_examples = 5, max_height = 15, t_proj = :sid, binarize = false, no_dist = true, c = 100.0),
+       () -> learn_projections(D; min_examples = 5, max_height = 100, n_projs = 25, t_proj = :sid, binarize = false, no_dist = true, single_mix = true, c = 100.0),
+       () -> learn_projections(D; n_projs = 3, min_examples = 5, max_height = 15, t_proj = :max, binarize = false, no_dist = true, r = 1.0, c = 100.0),
+       () -> learn_projections(D; min_examples = 5, max_height = 100, n_projs = 25, t_proj = :max, binarize = false, no_dist = true, r = 1.0, single_mix = true, c = 100.0),
       ]
 
 load_from_file = false
 
 names = ["sid", "sid_single", "max", "max_single"]
-if load_from_file C_all = Circuit.("saved/sin/" .* names .* ".spn")
+if load_from_file C_all = Circuit.("saved/sin_rot/" .* names .* ".spn")
 else
   C_all = Vector{Circuit}(undef, length(names))
   @qthreads for i ∈ 1:length(C_all)
@@ -52,10 +52,10 @@ else
     open("results/sin_rot/$(names[i]).txt", "w") do out write(out, string(ll)) end
     C_all[i] = C
     println("Saving to file...")
-    save(C, "saved/sin/" * names[i] * ".spn")
+    save(C, "saved/sin_rot/" * names[i] * ".spn")
   end
 end
-x_bounds, y_bounds = -7.5:0.1:7.5, -3.2:0.1:3.2
+x_bounds, y_bounds = -1.5:0.05:1.5, -2.0:0.05:2.0
 bounds = vec([[i, j] for i in x_bounds, j in y_bounds])
 for (C, name) ∈ zip(C_all, names)
   L = leaves(C)
@@ -68,14 +68,14 @@ for (C, name) ∈ zip(C_all, names)
     S[i,1], S[i,2] = L[j].variance, L[j+1].variance
     M[i,1], M[i,2] = L[j].mean, L[j+1].mean
   end
-  npzwrite("results/sin/$(name)_mean.npy", M)
-  npzwrite("results/sin/$(name)_variance.npy", S)
+  npzwrite("results/sin_rot/$(name)_mean.npy", M)
+  npzwrite("results/sin_rot/$(name)_variance.npy", S)
   println("Exporting densities...")
   density = Vector{Float64}(undef, length(bounds))
   println("Computing densities...")
-  Threads.@threads for i ∈ 1:length(bounds)
+  @Threads.threads for i ∈ 1:length(bounds)
     density[i] = logpdf(C, bounds[i])
   end
-  npzwrite("results/sin/$(name)_density.npy", density)
+  npzwrite("results/sin_rot/$(name)_density.npy", density)
   println(name, "... OK.")
 end

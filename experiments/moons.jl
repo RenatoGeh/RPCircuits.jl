@@ -4,7 +4,7 @@ using RPCircuits
 using NPZ
 using ThreadPools
 
-function learn_parameters!(C::Circuit, R, V; batchsize = 250)
+function learn_parameters!(C::Circuit, R, V; batchsize = 500)
   learner = SEM(C)
   avgnll = 0.0
   runnll = 0.0
@@ -35,17 +35,26 @@ L_f = [
        () -> learn_projections(R; min_examples = 5, max_height = 100, t_proj = :max, binarize = false, no_dist = true, r = 1.0, n_projs = 30, single_mix = true, c = 10.0),
       ]
 
+load_from_file = false
+
 names = ["sid", "sid_single", "max", "max_single"]
-C_all = Vector{Circuit}(undef, length(names))
-@qthreads for i ∈ 1:length(C_all)
-  println("Learning structure...")
-  C = L_f[i]()
-  println("Learning parameters...")
-  learn_parameters!(C, R, V)
-  println("Average log-likelihood: ", -NLL(C, T))
-  C_all[i] = C
+if load_from_file C_all = Circuit.("saved/moons/" .* names .* ".spn")
+else
+  C_all = Vector{Circuit}(undef, length(names))
+  @qthreads for i ∈ 1:length(C_all)
+    println("Learning structure...")
+    C = L_f[i]()
+    println("Learning parameters...")
+    learn_parameters!(C, R, V)
+    ll = -NLL(C, T)
+    println("Average log-likelihood: ", ll)
+    open("results/moons/$(names[i]).txt", "w") do out write(out, string(ll)) end
+    C_all[i] = C
+    println("Saving to file...")
+    save(C, "saved/moons/" * names[i] * ".spn")
+  end
 end
-x_bounds, y_bounds = -1.5:0.025:2.5, -0.75:0.01:1.25
+x_bounds, y_bounds = -1.5:0.05:2.5, -0.75:0.025:1.25
 bounds = vec([[i, j] for i in x_bounds, j in y_bounds])
 for (C, name) ∈ zip(C_all, names)
   L = leaves(C)
@@ -63,7 +72,7 @@ for (C, name) ∈ zip(C_all, names)
   println("Exporting densities...")
   density = Vector{Float64}(undef, length(bounds))
   println("Computing densities...")
-  @Threads.threads for i ∈ 1:length(x_bounds)
+  @Threads.threads for i ∈ 1:length(bounds)
     density[i] = logpdf(C, bounds[i])
   end
   npzwrite("results/moons/$(name)_density.npy", density)
