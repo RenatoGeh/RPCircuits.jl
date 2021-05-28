@@ -314,7 +314,7 @@ function learn_only_projections!(
           append!(C, (B, ⊥, ⊤))
           n_count += 2
         else
-          push!(C, Gaussian(j, μ[j], length(I) == 1 ? 0.001 : σ[j]))
+          push!(C, Gaussian(j, μ[j], isnan(σ[j]) || σ[j] == 0 ? 0.05 : σ[j]))
         end
       end
     else
@@ -338,7 +338,7 @@ function learn_only_projections!(
           append!(C, (B, ⊥, ⊤))
           n_count += 2
         else
-          push!(C, Gaussian(j, μ[j], length(J) == 1 ? 0.001 : σ[j]))
+          push!(C, Gaussian(j, μ[j], isnan(σ[j]) || σ[j] == 0 ? 0.05 : σ[j]))
         end
       end
     else
@@ -375,18 +375,24 @@ function learn_projections!(
       R = t_rule(data, dists)
       λ = 0
       I, J = Vector{Int}(), Vector{Int}()
+      r_I, r_J = nothing, nothing
+      same_I, same_J = true, true
       for (j, x) in enumerate(eachrow(data))
         if R(x)
           λ += 1
           push!(I, j)
+          if isnothing(r_I) r_I = x
+          elseif same_I same_I = (r_I == x) end
         else
           push!(J, j)
+          if isnothing(r_J) r_J = x
+          elseif same_J same_J = (r_J == x) end
         end
       end
       λ /= m
       n_count += 1
-      factorize_pos_sub = (n_height > max_height) || (length(I) < min_examples)
-      factorize_neg_sub = (n_height > max_height) || (length(J) < min_examples)
+      factorize_pos_sub = (n_height > max_height) || (length(I) < min_examples) || same_I
+      factorize_neg_sub = (n_height > max_height) || (length(J) < min_examples) || same_J
       pos = factorize_pos_sub ? Product(n) : Sum(n_projs)
       neg = factorize_neg_sub ? Product(n) : Sum(n_projs)
       pos_data = view(data, I, :)
@@ -414,7 +420,7 @@ function learn_projections!(
             append!(C, (B, ⊥, ⊤))
             n_count += 2
           else
-            push!(C, Gaussian(j, μ[j], length(I) == 1 ? 0.05 : σ[j]))
+            push!(C, Gaussian(j, μ[j], isnan(σ[j]) || σ[j] == 0 ? 0.05 : σ[j]))
           end
         end
       else
@@ -440,7 +446,7 @@ function learn_projections!(
             append!(C, (B, ⊥, ⊤))
             n_count += 2
           else
-            push!(C, Gaussian(j, μ[j], length(J) == 1 ? 0.05 : σ[j]))
+            push!(C, Gaussian(j, μ[j], isnan(σ[j]) || σ[j] == 0 ? 0.05 : σ[j]))
           end
         end
       else
