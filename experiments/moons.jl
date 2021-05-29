@@ -2,25 +2,27 @@ using Pkg; Pkg.activate("..")
 using Random
 using RPCircuits
 using NPZ
-using ThreadPools
+# using ThreadPools
 
 function learn_parameters!(C::Circuit, R, V; batchsize = 500)
   learner = SEM(C)
-  avgnll = 0.0
-  runnll = 0.0
-  indices = shuffle!(collect(1:size(R,1)))
-  while !converged(learner) && learner.steps < 100
-    sid = rand(1:(length(indices)-batchsize))
-    batch = view(R, indices[sid:(sid+batchsize-1)], :)
-    η = 0.975^learner.steps #max(0.95^learner.steps, 0.3)
-    update(learner, batch, η)
+  # avgnll = 0.0
+  # runnll = 0.0
+  #indices = shuffle!(collect(1:size(R,1)))
+  while learner.steps < 100
+    #sid = rand(1:(length(indices)-batchsize))
+    #batch = view(R, indices[sid:(sid+batchsize-1)], :)
+    batch = R
+    η = 1.0 # 0.975^learner.steps #max(0.95^learner.steps, 0.3)
+    update(learner, batch, η, 1e-4, true, 0.1)
     testnll = NLL(C, V)
     batchnll = NLL(C, batch)
     # running average NLL
-    avgnll *= (learner.steps-1)/learner.steps # discards initial NLL
-    avgnll += batchnll/learner.steps
-    runnll = (1-η)*runnll + η*batchnll
-    println("It: $(learner.steps) \t avg NLL: $avgnll \t mov NLL: $runnll \t batch NLL: $batchnll \t held-out NLL: $testnll \t Learning rate: $η")
+    # avgnll *= (learner.steps-1)/learner.steps # discards initial NLL
+    # avgnll += batchnll/learner.steps
+    # runnll = (1-η)*runnll + η*batchnll
+    # println("It: $(learner.steps) \t avg NLL: $avgnll \t mov NLL: $runnll \t batch NLL: $batchnll \t held-out NLL: $testnll \t Learning rate: $η")
+    println("It: $(learner.steps) \t train NLL: $batchnll \t held-out NLL: $testnll \t Learning rate: $η")
   end
   return learner
 end
@@ -41,7 +43,8 @@ names = ["sid", "sid_single", "max", "max_single"]
 if load_from_file C_all = Circuit.("saved/moons/" .* names .* ".spn")
 else
   C_all = Vector{Circuit}(undef, length(names))
-  @qthreads for i ∈ 1:length(C_all)
+  #@qthreads 
+  for i ∈ 1:length(C_all)
     println("Learning structure...")
     C = L_f[i]()
     println("Learning parameters...")
