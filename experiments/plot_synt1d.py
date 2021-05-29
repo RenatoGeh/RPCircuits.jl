@@ -24,11 +24,11 @@ for s in names:
   plt.clf()
 
   print("Plotting density...")
-  # x_bounds = (-2, 2, int(4/0.05)+1)
-  # y_bounds = (-2.0, 2.0, int(4/0.05)+1)
-  # density = np.exp(np.load(f"results/synt1d/{s}_density.npy").reshape(y_bounds[2], x_bounds[2]))
-  # plt.imshow(density, cmap = 'plasma', origin = 'lower',
-  #            extent = [x_bounds[0], x_bounds[1], y_bounds[0], y_bounds[1]],
-  #            norm = matplotlib.colors.Normalize())
-  # plt.savefig(f"plots/synt1d_density_{s}.pdf")
-  # plt.clf()
+  x_bounds = (-2, 2, int(4/0.1)+1)
+  y_bounds = (-2.0, 2.0, int(4/0.1)+1)
+  density = np.exp(np.load(f"results/synt1d/{s}_density.npy").reshape(y_bounds[2], x_bounds[2]))
+  plt.imshow(density, cmap = 'plasma', origin = 'lower',
+             extent = [x_bounds[0], x_bounds[1], y_bounds[0], y_bounds[1]],
+             norm = matplotlib.colors.Normalize())
+  plt.savefig(f"plots/synt1d_density_{s}.pdf")
+  plt.clf()

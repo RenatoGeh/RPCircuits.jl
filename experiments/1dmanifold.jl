@@ -4,11 +4,14 @@ using NPZ
 #using ThreadPools
 using Random
 
-function learn_parameters!(C::Circuit, L, T)
+function learn_parameters!(C::Circuit, L, T; batchsize = 100)
   learner = SEM(C)
+  indices = shuffle!(collect(1:size(L,1)))
   while learner.steps < 100
-    η = 1.0 #0.975^learner.steps #max(0.95^learner.steps, 0.3)
-    update(learner, L, η, 1e-4, true, 0.1)
+    sid = rand(1:(length(indices)-batchsize))
+    batch = view(L, indices[sid:(sid+batchsize-1)], :)
+    η = 0.975^learner.steps #max(0.95^learner.steps, 0.3)
+    update(learner, batch, η, 1e-4, true, 0.1)
     testnll = NLL(C, T)
     batchnll = NLL(C, L)
     # running average NLL
@@ -22,10 +25,10 @@ L, T = D[1:end-101,:], D[end-100:end,:]
 
 println("Learning with $(Threads.nthreads()) threads...")
 L_f = [
-       () -> learn_projections(L; n_projs = 3, min_examples = 5, max_height = 30, t_proj = :sid, binarize = false, no_dist = true, c = 10.0),
-       () -> learn_projections(L; min_examples = 5, max_height = 500, n_projs = 100, t_proj = :sid, binarize = false, no_dist = true, single_mix = true, c = 10.0),
-       () -> learn_projections(L; n_projs = 3, min_examples = 5, max_height = 30, t_proj = :max, binarize = false, no_dist = true, r = 1.0, c = 10.0),
-       () -> learn_projections(L; min_examples = 5, max_height = 500, n_projs = 100, t_proj = :max, binarize = false, no_dist = true, r = 1.0, single_mix = true, c = 10.0),
+       () -> learn_projections(L; n_projs = 3, min_examples = 10, max_height = 30, t_proj = :sid, binarize = false, no_dist = true, c = 10.0),
+       () -> learn_projections(L; min_examples = 10, max_height = 500, n_projs = 100, t_proj = :sid, binarize = false, no_dist = true, single_mix = true, c = 10.0),
+       () -> learn_projections(L; n_projs = 3, min_examples = 10, max_height = 30, t_proj = :max, binarize = false, no_dist = true, r = 1.0, c = 10.0),
+       () -> learn_projections(L; min_examples = 10, max_height = 500, n_projs = 100, t_proj = :max, binarize = false, no_dist = true, r = 1.0, single_mix = true, c = 10.0),
       ]
 
 load_from_file = false

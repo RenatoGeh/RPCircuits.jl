@@ -111,7 +111,7 @@ function update(
           @inbounds α = diff[i]*exp(values[i]-lv)
           @inbounds denon[i] += α
           @inbounds means[i] += α*datum[circ_p[i].scope]
-          @inbounds squares[i] += α*datum[circ_p[i].scope]^2
+          @inbounds squares[i] += α*(datum[circ_p[i].scope]^2)
       end
     end
   end
@@ -148,9 +148,8 @@ export update
 # Parameter learning by Accelerated Expectation-Maximimzation (SQUAREM)
 # RAVI VARADHAN & CHRISTOPHE ROLAND, Simple and Globally Convergent Methods for Accelerating the Convergence of Any EM Algorithm, J. Scand J Statist 2008
 # Yu Du & Ravi Varadhan, SQUAREM: An R Package for Off-the-Shelf Acceleration of EM, MM and Other EM-Like Monotone Algorithms, J. Statistical Software, 2020.
-
 """
-Learn weights using the Expectation Maximization algorithm.
+Learn weights using the Accelerated Expectation Maximization algorithm.
 """
 mutable struct SQUAREM <: ParameterLearner
   circ::Circuit
@@ -213,7 +212,7 @@ function update(
   learner::SQUAREM,
   Data::AbstractMatrix,
   smoothing::Float64 = 0.0001,
-  learngaussians::Bool = false,
+  learngaussians::Bool = false, # not implemented
   minimumvariance::Float64 = learner.minimumvariance,
 )
 
@@ -225,14 +224,14 @@ function update(
   r = learner.cache3
   v = learner.cache4
   sumnodes = filter(i -> isa(learner.circ[i], Sum), 1:length(learner.circ))
-  if learngaussians
-    gaussiannodes = filter(i -> isa(circ_p[i], Gaussian), 1:length(circ_p))
-    if length(gaussiannodes) > 0
-        means = Dict{Integer,Float64}(i => 0.0 for i in gaussiannodes)
-        squares = Dict{Integer,Float64}(i => 0.0 for i in gaussiannodes)
-        denon = Dict{Integer,Float64}(i => 0.0 for i in gaussiannodes)
-    end
-  end
+  # if learngaussians
+  #   gaussiannodes = filter(i -> isa(circ_p[i], Gaussian), 1:length(circ_p))
+  #   if length(gaussiannodes) > 0
+  #       means = Dict{Integer,Float64}(i => 0.0 for i in gaussiannodes)
+  #       squares = Dict{Integer,Float64}(i => 0.0 for i in gaussiannodes)
+  #       denon = Dict{Integer,Float64}(i => 0.0 for i in gaussiannodes)
+  #   end
+  # end
   diff = learner.diff
   values = learner.values
   # Compute theta1 = EM_Update(theta0)
@@ -253,15 +252,14 @@ function update(
         @assert θ_1[i].weights[k] ≥ 0
       end
     end
-    if learngaussians
-      Threads.@threads for i in gaussiannodes
-          @inbounds α = diff[i]*exp(values[i]-lv)
-          @inbounds denon[i] += α
-          @inbounds means[i] += α*datum[θ_0[i].scope]
-          @inbounds squares[i] += α*datum[θ_0[i].scope]^2
-      end
-    end
-
+    # if learngaussians
+    #   Threads.@threads for i in gaussiannodes
+    #       @inbounds α = diff[i]*exp(values[i]-lv)
+    #       @inbounds denon[i] += α
+    #       @inbounds means[i] += α*datum[θ_0[i].scope]
+    #       @inbounds squares[i] += α*datum[θ_0[i].scope]^2
+    #   end
+    # end
   end
   @inbounds Threads.@threads for i in sumnodes
     # println(θ_1[i].weights)
@@ -271,15 +269,19 @@ function update(
     # println("    ", θ_1[i].weights)
     @assert sum(θ_1[i].weights) ≈ 1.0 "1. Unnormalized weight vector at node $i: $(sum(θ_1[i].weights)) | $(θ_1[i].weights)"
   end
-  if learngaussians
-    Threads.@threads for i in gaussiannodes
-        @inbounds θ_1[i].mean = means[i]/denon[i]
-        @inbounds θ_1[i].variance = squares[i]/denon[i] - (θ_1[i].mean)^2
-        @inbounds if θ_1[i].variance < minimumvariance
-            @inbounds θ_1[i].variance = minimumvariance
-        end
-    end
-  end  
+  # if learngaussians
+  #   Threads.@threads for i in gaussiannodes
+  #       @inbounds θ_1[i].mean = means[i]/denon[i]
+  #       @inbounds θ_1[i].variance = squares[i]/denon[i] - (θ_1[i].mean)^2
+  #       @inbounds if θ_1[i].variance < minimumvariance
+  #           @inbounds θ_1[i].variance = minimumvariance
+  #       end
+  #       # reset values for next update
+  #       means[i] = 0.0
+  #       squares[i] = 0.0
+  #       denon[i] = 0.0
+  #   end
+  # end  
   # Compute theta2 = EM_Update(theta1)
   for t in 1:numrows
     datum = view(Data, t, :)
@@ -298,6 +300,14 @@ function update(
         @assert θ_2[i].weights[k] ≥ 0
       end
     end
+    # if learngaussians
+    #   Threads.@threads for i in gaussiannodes
+    #       @inbounds α = diff[i]*exp(values[i]-lv)
+    #       @inbounds denon[i] += α
+    #       @inbounds means[i] += α*datum[θ_0[i].scope]
+    #       @inbounds squares[i] += α*datum[θ_0[i].scope]^2
+    #   end
+    # end
   end
   @inbounds Threads.@threads for i in sumnodes
     # println(θ_2[i].weights)
@@ -307,6 +317,14 @@ function update(
     # println("    ", θ_2[i].weights)
     @assert sum(θ_2[i].weights) ≈ 1.0 "2. Unnormalized weight vector at node $i: $(sum(θ_2[i].weights)) | $(θ_2[i].weights)"
   end
+  # if learngaussians
+  #   Threads.@threads for i in gaussiannodes
+  #       @inbounds θ_2[i].mean = means[i]/denon[i]
+  #       @inbounds θ_2[i].variance = squares[i]/denon[i] - (θ_2[i].mean)^2
+  #       @inbounds if θ_2[i].variance < minimumvariance
+  #           @inbounds θ_2[i].variance = minimumvariance
+  #       end
+  #   end  
   # Compute r, v, |r| and |v|
   r_norm, v_norm = 0.0, 0.0
   @inbounds Threads.@threads for i in sumnodes
