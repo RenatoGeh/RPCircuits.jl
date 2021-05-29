@@ -107,11 +107,11 @@ function update(
       end
     end
     if learngaussians
-      for i in gaussiannodes
-          α = diff[i]*exp(values[i]-lv)
-          denon[i] += α
-          means[i] += α*datum[circ_p[i].scope]
-          squares[i] += α*datum[circ_p[i].scope]^2
+      Threads.@threads for i in gaussiannodes
+          @inbounds α = diff[i]*exp(values[i]-lv)
+          @inbounds denon[i] += α
+          @inbounds means[i] += α*datum[circ_p[i].scope]
+          @inbounds squares[i] += α*datum[circ_p[i].scope]^2
       end
     end
   end
@@ -127,11 +127,12 @@ function update(
     # @assert sum(circ_n[i].weights) ≈ 1.0 "Unnormalized weight vector at node $i: $(sum(circ_n[i].weights)) | $(circ_n[i].weights) | $(circ_p[i].weights)"
   end
   if learngaussians
-    for i in gaussiannodes
-        circ_n[i].mean = learningrate*circ_p[i].mean + (1-learningrate)*means[i]/denon[i]
-        circ_n[i].variance = learningrate*(squares[i]/denon[i] - (circ_n[i].mean)^2) + (1-learningrate)*circ_p[i].variance
-        if circ_n[i].variance < minimumvariance
-            circ_n[i].variance = minimumvariance
+    Threads.@threads for i in gaussiannodes
+        # online update: θ[t+1] = (1-η)*θ[t] + η*update(θ[t])
+        @inbounds circ_n[i].mean = learningrate*means[i]/denon[i] + (1-learningrate)*circ_p[i].mean
+        @inbounds circ_n[i].variance = learningrate*(squares[i]/denon[i] - (circ_n[i].mean)^2) + (1-learningrate)*circ_p[i].variance
+        @inbounds if circ_n[i].variance < minimumvariance
+            @inbounds circ_n[i].variance = minimumvariance
         end
     end
   end
@@ -205,12 +206,14 @@ circ[i].weights[j] = circ[i].weights[k] * backpropagate(circ)[i]/sum(circ[i].wei
   - `learner`: SQUAREM struct
   - `data`: Data Matrix
   - `smoothing`: weight smoothing factor (= pseudo expected count) [default: 0.0001]
+  - `learngaussians`: whether to also update the parameters of Gaussian leaves [default: false]
   - `minimumvariance`: minimum variance for Gaussian leaves [default: learner.minimumvariance]
 """
 function update(
   learner::SQUAREM,
   Data::AbstractMatrix,
   smoothing::Float64 = 0.0001,
+  learngaussians::Bool = false,
   minimumvariance::Float64 = learner.minimumvariance,
 )
 
@@ -221,8 +224,15 @@ function update(
   θ_2 = learner.cache2
   r = learner.cache3
   v = learner.cache4
-  # smooth out estaimtors to avoid degenerate probabilities
   sumnodes = filter(i -> isa(learner.circ[i], Sum), 1:length(learner.circ))
+  if learngaussians
+    gaussiannodes = filter(i -> isa(circ_p[i], Gaussian), 1:length(circ_p))
+    if length(gaussiannodes) > 0
+        means = Dict{Integer,Float64}(i => 0.0 for i in gaussiannodes)
+        squares = Dict{Integer,Float64}(i => 0.0 for i in gaussiannodes)
+        denon = Dict{Integer,Float64}(i => 0.0 for i in gaussiannodes)
+    end
+  end
   diff = learner.diff
   values = learner.values
   # Compute theta1 = EM_Update(theta0)
@@ -243,6 +253,15 @@ function update(
         @assert θ_1[i].weights[k] ≥ 0
       end
     end
+    if learngaussians
+      Threads.@threads for i in gaussiannodes
+          @inbounds α = diff[i]*exp(values[i]-lv)
+          @inbounds denon[i] += α
+          @inbounds means[i] += α*datum[θ_0[i].scope]
+          @inbounds squares[i] += α*datum[θ_0[i].scope]^2
+      end
+    end
+
   end
   @inbounds Threads.@threads for i in sumnodes
     # println(θ_1[i].weights)
@@ -252,6 +271,15 @@ function update(
     # println("    ", θ_1[i].weights)
     @assert sum(θ_1[i].weights) ≈ 1.0 "1. Unnormalized weight vector at node $i: $(sum(θ_1[i].weights)) | $(θ_1[i].weights)"
   end
+  if learngaussians
+    Threads.@threads for i in gaussiannodes
+        @inbounds θ_1[i].mean = means[i]/denon[i]
+        @inbounds θ_1[i].variance = squares[i]/denon[i] - (θ_1[i].mean)^2
+        @inbounds if θ_1[i].variance < minimumvariance
+            @inbounds θ_1[i].variance = minimumvariance
+        end
+    end
+  end  
   # Compute theta2 = EM_Update(theta1)
   for t in 1:numrows
     datum = view(Data, t, :)
