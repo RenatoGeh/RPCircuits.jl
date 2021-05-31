@@ -52,9 +52,10 @@ function avgdiam(S::AbstractMatrix{<:Real}, μ::Vector{<:Real})::Float64
 end
 @inline avgdiam(S::AbstractMatrix{<:Real})::Float64 = avgdiam(S, vec(mean(S; dims = 1)))
 
-function max_rule(S::AbstractMatrix{<:Real}, r::Float64, trials::Int; v_d = nothing)::Function
+function max_rule(S::AbstractMatrix{<:Real}, r::Float64, trials::Int; v_d = nothing)
   n, m = size(S)
   best_diff, best_split = Inf, nothing
+  best_μ, best_v = nothing, nothing
   for j ∈ 1:trials
     v = isnothing(v_d) ? randunit(m) : v_d
     x, y = rand(1:n), rand(1:n-1)
@@ -68,12 +69,12 @@ function max_rule(S::AbstractMatrix{<:Real}, r::Float64, trials::Int; v_d = noth
     f = i::AbstractVector{<:Real} -> dot(i, v) <= μ
     P, Q = select(f, S)
     d = abs(avgdiam(P)-avgdiam(Q))
-    if d < best_diff best_diff, best_split = d, f end
+    if d < best_diff best_diff, best_split, best_μ, best_v = d, f, μ, v end
   end
-  return best_split
+  return best_split, best_μ, best_v
 end
 
-function sid_rule(S::AbstractMatrix{<:Real}, c::Float64, trials::Int; v_d = nothing)::Function
+function sid_rule(S::AbstractMatrix{<:Real}, c::Float64, trials::Int; v_d = nothing)
   n, m = size(S)
   x, y = rand(1:n), rand(1:n-1)
   if x == y y = n end
@@ -82,6 +83,7 @@ function sid_rule(S::AbstractMatrix{<:Real}, c::Float64, trials::Int; v_d = noth
   Δ_A = avgdiam(S, me)
   if Δ <= c*Δ_A
     best_diff, best_split = Inf, nothing
+    best_μ, best_v = nothing, nothing
     for j ∈ 1:trials
       v = isnothing(v_d) ? randunit(m) : v_d
       a = sort!([dot(v, x) for x ∈ eachrow(S)])
@@ -105,19 +107,19 @@ function sid_rule(S::AbstractMatrix{<:Real}, c::Float64, trials::Int; v_d = noth
       f = x::AbstractVector{<:Real} -> dot(v, x) <= θ
       P, Q = select(f, S)
       d = abs(avgdiam(P)-avgdiam(Q))
-      if d < best_diff best_diff, best_split = d, f end
+      if d < best_diff best_diff, best_split, best_μ, best_v = d, f, θ, v end
     end
-    return best_split
+    return best_split, best_μ, best_v
   end
   Z = Vector{Float64}(undef, n)
   @inbounds for i ∈ 1:n
     Z[i] = norm(S[i, :] - me)
   end
   μ = median(Z)
-  return x::AbstractVector{<:Real} -> norm(x - me) <= μ
+  return x::AbstractVector{<:Real} -> norm(x - me) <= μ, μ, [-Inf, -Inf]
 end
 
-function median_rule(S::AbstractMatrix{<:Real}; v_d = nothing)::Function
+function median_rule(S::AbstractMatrix{<:Real}; v_d = nothing)
   n, m = size(S)
   v = isnothing(v_d) ? RPCircuits.randunit(m) : v_d
   Z = Vector{Float64}(undef, n)
@@ -125,7 +127,7 @@ function median_rule(S::AbstractMatrix{<:Real}; v_d = nothing)::Function
     Z[i] = dot(S[i,:], v)
   end
   μ = median(Z)
-  return x -> dot(x, v) <= μ
+  return x -> dot(x, v) <= μ, μ, v
 end
 
 function save_data(D::AbstractMatrix{<:Real}, path::String)
@@ -144,7 +146,8 @@ function plot_parts(D::AbstractMatrix{<:Real}, F::Vector, pre::String; level::In
     Z = nothing, max_depth::Int = 2)
   if level > max_depth return end
   f = F[level]
-  X, Y = RPCircuits.select(f(D), D)
+  g, μ, v = f(D)
+  X, Y = RPCircuits.select(g, D)
   scatter(X[:,1], X[:,2]; legend = false);
   scatter!(Y[:,1], Y[:,2]; legend = false);
   !isnothing(Z) && scatter!(Z[:,1], Z[:,2]; legend = false, seriescolor = :gray74)
@@ -153,6 +156,7 @@ function plot_parts(D::AbstractMatrix{<:Real}, F::Vector, pre::String; level::In
   save_data(X, "/tmp/$(pre)_blue_$(level).data")
   save_data(Y, "/tmp/$(pre)_red_$(level).data")
   save_data(Z, "/tmp/$(pre)_gray_$(level).data")
+  open("/tmp/$(pre)_$(level).params", "w") do out write(out, "$(μ)\n$(v[1]) $(v[2])\n") end
   plot_parts(X, F, pre; level = level + 1, Z)
 end
 
