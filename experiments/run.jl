@@ -24,12 +24,17 @@ for data_idx ∈ 1:length(datasets)
                         max_height = max_height, trials = trials)
   println("Learning parameters...")
   learner = SEM(C)
-  indices = shuffle!(collect(1:size(R,1)))
+  if batchsize > 0 indices = shuffle!(collect(1:size(R,1))) end
   while !converged(learner) && learner.steps < em_steps
-    sid = rand(1:(length(indices)-batchsize))
-    batch = view(R, indices[sid:(sid+batchsize-1)], :)
-    η = 0.975^learner.steps #max(0.95^learner.steps, 0.3)
-    update(learner, batch, η)
+    if batchsize > 0
+      sid = rand(1:(length(indices)-batchsize))
+      batch = view(R, indices[sid:(sid+batchsize-1)], :)
+      η = 0.975^learner.steps #max(0.95^learner.steps, 0.3)
+    else
+      batch = R
+      η = 1.0
+    end
+    update(learner, batch, η, 1e-4, true, 0.01)
     println("Iteration: ", learner.steps)
   end
   LL[data_idx] = -NLL(C, T)
