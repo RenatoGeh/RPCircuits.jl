@@ -4,6 +4,7 @@ using Plots
 using LinearAlgebra
 using Statistics
 using NPZ
+using Random
 
 "Returns the orthogonal unit vector of another vector."
 function ortho(x::Vector{<:Real})::Vector{<:Real}
@@ -155,6 +156,7 @@ function plot_parts(D::AbstractMatrix{<:Real}, F::Vector, pre::String; level::In
   plot_parts(X, F, pre; level = level + 1, Z)
 end
 
+Random.seed!(1)
 M = npzread("sin_rot.npy")
 a = [1.5, 1.0]
 a = a ./ norm(a)
