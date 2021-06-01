@@ -93,7 +93,8 @@ function max_rule(S::AbstractMatrix{<:Real}, r::Float64, trials::Int)::Function
     μ = median(Z) + δ
     f = i::AbstractVector{<:Real} -> dot(i, v) <= μ
     P, Q = select(f, S)
-    d = abs(avgdiam(P)-avgdiam(Q))
+    d_P, d_Q = avgdiam(P), avgdiam(Q)
+    d = abs(d_P*d_P-d_Q*d_Q)
     if d < best_diff best_diff, best_split = d, f end
   end
   return best_split
@@ -190,7 +191,8 @@ function sid_rule(S::AbstractMatrix{<:Real}, c::Float64, trials::Int)::Function
       θ = (a[i_min]+a[i_min+1])/2
       f = x::AbstractVector{<:Real} -> dot(v, x) <= θ
       P, Q = select(f, S)
-      d = abs(avgdiam(P)-avgdiam(Q))
+      d_P, d_Q = avgdiam(P), avgdiam(Q)
+      d = abs(d_P*d_P-d_Q*d_Q)
       if d < best_diff best_diff, best_split = d, f end
     end
     return best_split
