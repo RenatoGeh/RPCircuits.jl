@@ -160,12 +160,50 @@ function plot_parts(D::AbstractMatrix{<:Real}, F::Vector, pre::String; level::In
   plot_parts(X, F, pre; level = level + 1, Z)
 end
 
-Random.seed!(1)
-M = npzread("sin_rot.npy")
-a = [1.5, 1.0]
-a = a ./ norm(a)
-V = [ortho(a), a]
-plot_parts(M, [x -> median_rule(x; v_d = V[i]) for i in 1:2], "median")
-plot_parts(M, [x -> max_rule(x, 1.0, 100; v_d = V[i]) for i in 1:2], "max")
-plot_parts(M, [x -> sid_rule(x, 10.0, 100; v_d = V[i]) for i in 1:2], "sid")
+function plot_leaves(D::AbstractMatrix{<:Real}, F::Vector, pre::String; min_examples::Int = 100)
+  P = Vector{AbstractMatrix{<:Real}}()
+  function split(S::AbstractMatrix{<:Real}, l::Int)
+    n = size(S, 1)
+    if n <= min_examples push!(P, S); return end
+    X, Y = RPCircuits.select((F[l])(S)[1], S)
+    split(X, l+1)
+    split(Y, l+1)
+  end
+  split(D, 1)
+  scatter(legend = false, palette = :glasbey_bw_n256)
+  for S ∈ P
+    scatter!(S[:,1], S[:,2])
+  end
+  savefig("/tmp/$(pre)_leaves.pdf")
+  out = open("/tmp/$(pre)_leaves.data", "w")
+  for (i, S) ∈ enumerate(P)
+    n = size(S, 1)
+    for j ∈ 1:n
+      write(out, "$(i) $(S[j,1]) $(S[j,2])\n")
+    end
+  end
+  close(out)
+end
+
+function run_parts()
+  Random.seed!(1)
+  M = npzread("sin_rot.npy")
+  a = [1.5, 1.0]
+  a = a ./ norm(a)
+  V = append!([ortho(a), a], [randunit(size(M, 2)) for i in 1:10])
+  plot_parts(M, [x -> median_rule(x; v_d = v) for v in V], "median")
+  plot_parts(M, [x -> max_rule(x, 1.0, 100; v_d = v) for v in V], "max")
+  plot_parts(M, [x -> sid_rule(x, 10.0, 100; v_d = v) for v in V], "sid")
+end
+
+function run_leaves()
+  Random.seed!(2)
+  M = npzread("sin_rot.npy")
+  a = [1.5, 1.0]
+  a = a ./ norm(a)
+  V = append!([ortho(a), a], [randunit(size(M, 2)) for i in 1:50])
+  plot_leaves(M, [x -> median_rule(x; v_d = v) for v in V], "median")
+  plot_leaves(M, [x -> max_rule(x, 0.5, 10; v_d = v) for v in V], "max")
+  plot_leaves(M, [x -> sid_rule(x, 10.0, 10; v_d = v) for v in V], "sid")
+end
 
