@@ -160,6 +160,31 @@ function plot_parts(D::AbstractMatrix{<:Real}, F::Vector, pre::String; level::In
   plot_parts(X, F, pre; level = level + 1, Z)
 end
 
+function plot_full_parts(D::AbstractMatrix{<:Real}, F::Vector, pre::String; max_depth::Int = 2)
+  params = Vector()
+  parts = Vector{AbstractMatrix{<:Real}}()
+  function split(S::AbstractMatrix{<:Real}, level::Int)
+    f = F[level]
+    println(level)
+    g, μ, v = f(S)
+    X, Y = RPCircuits.select(g, S)
+    push!(params, (μ, v))
+    if level > max_depth-1
+      append!(parts, (X, Y))
+    else split(X, level + 1); split(Y, level + 2) end
+  end
+  split(D, 1)
+  for (i, X) ∈ enumerate(parts)
+    save_data(X, "/tmp/$(pre)_$(i)_full_parts.data")
+  end
+  out = open("/tmp/$(pre)_full.params", "w")
+  for (μ, v) ∈ params
+    write(out, "$(μ)\n$(v[1]) $(v[2])\n")
+  end
+  close(out)
+  return parts
+end
+
 function plot_leaves(D::AbstractMatrix{<:Real}, F::Vector, pre::String; min_examples::Int = 100)
   P = Vector{AbstractMatrix{<:Real}}()
   function split(S::AbstractMatrix{<:Real}, l::Int)
@@ -205,5 +230,17 @@ function run_leaves()
   plot_leaves(M, [x -> median_rule(x; v_d = v) for v in V], "median")
   plot_leaves(M, [x -> max_rule(x, 0.5, 10; v_d = v) for v in V], "max")
   plot_leaves(M, [x -> sid_rule(x, 10.0, 10; v_d = v) for v in V], "sid")
+end
+
+function run_full_parts()
+  Random.seed!(1)
+  M = npzread("sin_rot.npy")
+  a = [1.5, 1.0]
+  a = a ./ norm(a)
+  V = append!([ortho(a), a], [randunit(size(M, 2)) for i in 1:10])
+  println(V)
+  plot_full_parts(M, [x -> median_rule(x; v_d = v) for v in V], "median")
+  plot_full_parts(M, [x -> max_rule(x, 1.0, 100; v_d = v) for v in V], "max")
+  plot_full_parts(M, [x -> sid_rule(x, 10.0, 100; v_d = v) for v in V], "sid")
 end
 
