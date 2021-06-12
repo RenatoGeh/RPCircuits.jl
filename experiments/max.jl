@@ -6,7 +6,7 @@ using Serialization
 datasets = ["nltcs", "book", "plants", "baudio", "jester", "bnetflix", "accidents", "mushrooms",
             "adult", "dna"]
 LL = Vector{Float64}(undef, length(datasets))
-for data_idx ∈ [1] #1:length(datasets)
+for data_idx ∈ 1:length(datasets)
   println("Dataset: ", datasets[data_idx])
   R, V, T = twenty_datasets(datasets[data_idx]; as_df = false)
   println("Learning structure...")
