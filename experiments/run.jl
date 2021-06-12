@@ -25,11 +25,11 @@ for data_idx ∈ 1:length(datasets)
   println("Learning parameters...")
   learner = SEM(C)
   if batchsize > 0 indices = shuffle!(collect(1:size(R,1))) end
-  while !converged(learner) && learner.steps < em_steps
+  while learner.steps < em_steps
     if batchsize > 0
       sid = rand(1:(length(indices)-batchsize))
       batch = view(R, indices[sid:(sid+batchsize-1)], :)
-      η = 0.975^learner.steps #max(0.95^learner.steps, 0.3)
+      η = 0.975^learner.steps 
     else
       batch = R
       η = 1.0
