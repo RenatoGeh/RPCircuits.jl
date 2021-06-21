@@ -220,9 +220,10 @@ function learn_projections(
   max_height::Int = -1,
   min_examples::Int = 30,
   binarize::Bool = false,
-  single_mix::Bool = false,
+  t_mix::Symbol = :all,
   no_dist::Bool = true,
   trials::Int = 5,
+  dense_leaves::Bool = false,
 )::Circuit
   n, m = size(S)
   if max_height < 0 max_height = floor(Int, sqrt(m)) end
@@ -239,17 +240,204 @@ function learn_projections(
   else
     D = nothing
   end
-  learn_func = single_mix ? learn_only_projections! : learn_projections!
+  if t_mix == :single learn_func = learn_only_projections!
+  elseif t_mix == :alt learn_func = learn_alt_projections!
+  else learn_func = learn_projections! end
   if t_proj == :mean
-    learn_func(C, S, D, n_projs, max_height, min_examples, binarize, (x, y) -> mean_rule(x, y, c))
+    learn_func(C, S, D, n_projs, max_height, min_examples, binarize, dense_leaves, (x, y) -> mean_rule(x, y, c))
   elseif t_proj == :max
-    learn_func(C, S, D, n_projs, max_height, min_examples, binarize, (x, y) -> max_rule(x, r, trials))
+    learn_func(C, S, D, n_projs, max_height, min_examples, binarize, dense_leaves, (x, y) -> max_rule(x, r, trials))
   else
-    learn_func(C, S, D, n_projs, max_height, min_examples, binarize, (x, y) -> sid_rule(x, c, trials))
+    learn_func(C, S, D, n_projs, max_height, min_examples, binarize, dense_leaves, (x, y) -> sid_rule(x, c, trials))
   end
   return Circuit(C; as_ref = true)
 end
 export learn_projections
+
+function learn_alt_projections!(
+  C::Vector{Node},
+  S::AbstractMatrix{<:Real},
+  D::Union{AbstractMatrix{Float64}, Nothing},
+  n_projs::Int,
+  max_height::Int,
+  min_examples::Int,
+  binarize::Bool,
+  dense_leaves::Bool,
+  t_rule::Function,
+)
+  c_weight = 1.0/n_projs
+  n_count = 1
+  n_height = 0
+  n = size(S, 2)
+  Q = Tuple{AbstractMatrix{<:Real}, Union{AbstractMatrix{Float64}, Nothing}, Node, Int}[(S, D, Sum(n_projs), 1)]
+  while !isempty(Q)
+    data, dists, Σ, alt_level = popfirst!(Q)
+    m = size(data, 1)
+    n_height += 1
+    if alt_level % 2 == 1
+      push!(C, Σ)
+      Ch = Σ.children
+      Σ.weights .= fill(c_weight, n_projs)
+      for i in 1:n_projs
+        R = t_rule(data, dists)
+        λ = 0
+        I, J = Vector{Int}(), Vector{Int}()
+        r_I, r_J = nothing, nothing
+        same_I, same_J = true, true
+        for (j, x) in enumerate(eachrow(data))
+          if R(x)
+            λ += 1
+            push!(I, j)
+            if isnothing(r_I) r_I = x
+            elseif same_I same_I = (r_I == x) end
+          else
+            push!(J, j)
+            if isnothing(r_J) r_J = x
+            elseif same_J same_J = (r_J == x) end
+          end
+        end
+        λ /= m
+        n_count += 1
+        factorize_pos_sub = (n_height > max_height) || (length(I) < min_examples) || same_I
+        factorize_neg_sub = (n_height > max_height) || (length(J) < min_examples) || same_J
+        pos = factorize_pos_sub ? Product(n) : Sum(2)
+        neg = factorize_neg_sub ? Product(n) : Sum(2)
+        pos_data = view(data, I, :)
+        neg_data = view(data, J, :)
+        Ch[i] = n_count
+        P = Sum([n_count + 1, n_count + 2], [λ, 1.0-λ])
+        append!(C, (P, pos, neg))
+        n_count += 2
+        if factorize_pos_sub
+          if binarize
+            θ = vec(sum(pos_data; dims = 1)) / length(I)
+          else
+            μ = mean(pos_data; dims = 1)
+            σ = std(pos_data; dims = 1)
+          end
+          for j in 1:n
+            n_count += 1
+            pos.children[j] = n_count
+            if binarize
+              ⊥ = Indicator(j, 0)
+              ⊤ = Indicator(j, 1)
+              B = Sum([n_count+1, n_count+2], [1-θ[j], θ[j]])
+              append!(C, (B, ⊥, ⊤))
+              n_count += 2
+            else
+              push!(C, Gaussian(j, μ[j], isnan(σ[j]) || σ[j] == 0 ? 0.05 : σ[j]*σ[j]))
+            end
+          end
+        else
+          pos_dists = isnothing(dists) ? nothing : view(dists, I, I)
+          push!(Q, (pos_data, pos_dists, pos, alt_level + 1))
+        end
+        if factorize_neg_sub
+          if binarize
+            θ = vec(sum(neg_data; dims = 1)) / length(J)
+          else
+            μ = mean(neg_data; dims = 1)
+            σ = std(neg_data; dims = 1)
+          end
+          for j in 1:n
+            n_count += 1
+            neg.children[j] = n_count
+            if binarize
+              ⊥ = Indicator(j, 0)
+              ⊤ = Indicator(j, 1)
+              B = Sum([n_count+1, n_count+2], [1-θ[j], θ[j]])
+              append!(C, (B, ⊥, ⊤))
+              n_count += 2
+            else
+              push!(C, Gaussian(j, μ[j], isnan(σ[j]) || σ[j] == 0 ? 0.05 : σ[j]*σ[j]))
+            end
+          end
+        else
+          neg_dists = isnothing(dists) ? nothing : view(dists, J, J)
+          push!(Q, (neg_data, neg_dists, neg, alt_level + 1))
+        end
+      end
+      n_count += 1
+    else
+      R = t_rule(data, dists)
+      λ = 0
+      I, J = Vector{Int}(), Vector{Int}()
+      r_I, r_J = nothing, nothing
+      same_I, same_J = true, true
+      for (j, x) in enumerate(eachrow(data))
+        if R(x)
+          λ += 1
+          push!(I, j)
+          if isnothing(r_I) r_I = x
+          elseif same_I same_I = (r_I == x) end
+        else
+          push!(J, j)
+          if isnothing(r_J) r_J = x
+          elseif same_J same_J = (r_J == x) end
+        end
+      end
+      λ /= m
+      factorize_pos_sub = (n_height > max_height) || (length(I) < min_examples) || same_I
+      factorize_neg_sub = (n_height > max_height) || (length(J) < min_examples) || same_J
+      pos = factorize_pos_sub ? Product(n) : Sum(n_projs)
+      neg = factorize_neg_sub ? Product(n) : Sum(n_projs)
+      pos_data = view(data, I, :)
+      neg_data = view(data, J, :)
+      Σ.children[1], Σ.children[2] = n_count+1, n_count+2
+      Σ.weights[1], Σ.weights[2] = λ, 1.0-λ
+      n_count += 2
+      append!(C, (pos, neg))
+      if factorize_pos_sub
+        if binarize
+          θ = vec(sum(pos_data; dims = 1)) / length(I)
+        else
+          μ = mean(pos_data; dims = 1)
+          σ = std(pos_data; dims = 1)
+        end
+        for j in 1:n
+          n_count += 1
+          pos.children[j] = n_count
+          if binarize
+            ⊥ = Indicator(j, 0)
+            ⊤ = Indicator(j, 1)
+            B = Sum([n_count+1, n_count+2], [1-θ[j], θ[j]])
+            append!(C, (B, ⊥, ⊤))
+            n_count += 2
+          else
+            push!(C, Gaussian(j, μ[j], isnan(σ[j]) || σ[j] == 0 ? 0.05 : σ[j]*σ[j]))
+          end
+        end
+      else
+        pos_dists = isnothing(dists) ? nothing : view(dists, I, I)
+        push!(Q, (pos_data, pos_dists, pos, alt_level + 1))
+      end
+      if factorize_neg_sub
+        if binarize
+          θ = vec(sum(neg_data; dims = 1)) / length(J)
+        else
+          μ = mean(neg_data; dims = 1)
+          σ = std(neg_data; dims = 1)
+        end
+        for j in 1:n
+          n_count += 1
+          neg.children[j] = n_count
+          if binarize
+            ⊥ = Indicator(j, 0)
+            ⊤ = Indicator(j, 1)
+            B = Sum([n_count+1, n_count+2], [1-θ[j], θ[j]])
+            append!(C, (B, ⊥, ⊤))
+            n_count += 2
+          else
+            push!(C, Gaussian(j, μ[j], isnan(σ[j]) || σ[j] == 0 ? 0.05 : σ[j]*σ[j]))
+          end
+        end
+      else
+        neg_dists = isnothing(dists) ? nothing : view(dists, J, J)
+        push!(Q, (neg_data, neg_dists, neg, alt_level + 1))
+      end
+    end
+  end
+end
 
 function learn_only_projections!(
   C::Vector{Node},
@@ -259,6 +447,7 @@ function learn_only_projections!(
   max_height::Int,
   min_examples::Int,
   binarize::Bool,
+  dense_leaves::Bool,
   t_rule::Function,
 )
   n_count = 1
@@ -280,17 +469,23 @@ function learn_only_projections!(
     R = t_rule(data, dists)
     λ = 0
     I, J = Vector{Int}(), Vector{Int}()
+    r_I, r_J = nothing, nothing
+    same_I, same_J = true, true
     for (j, x) in enumerate(eachrow(data))
       if R(x)
         λ += 1
         push!(I, j)
+        if isnothing(r_I) r_I = x
+        elseif same_I same_I = (r_I == x) end
       else
         push!(J, j)
+        if isnothing(r_J) r_J = x
+        elseif same_J same_J = (r_J == x) end
       end
     end
     λ /= m
-    factorize_pos_sub = (n_height > max_height) || (length(I) < min_examples)
-    factorize_neg_sub = (n_height > max_height) || (length(J) < min_examples)
+    factorize_pos_sub = (n_height > max_height) || (length(I) < min_examples) || same_I
+    factorize_neg_sub = (n_height > max_height) || (length(J) < min_examples) || same_J
     pos = factorize_pos_sub ? Product(n) : Sum(2)
     neg = factorize_neg_sub ? Product(n) : Sum(2)
     pos_data = view(data, I, :)
@@ -316,7 +511,7 @@ function learn_only_projections!(
           append!(C, (B, ⊥, ⊤))
           n_count += 2
         else
-          push!(C, Gaussian(j, μ[j], isnan(σ[j]) || σ[j] == 0 ? 0.05 : σ[j]))
+          push!(C, Gaussian(j, μ[j], isnan(σ[j]) || σ[j] == 0 ? 0.05 : σ[j]*σ[j]))
         end
       end
     else
@@ -340,7 +535,7 @@ function learn_only_projections!(
           append!(C, (B, ⊥, ⊤))
           n_count += 2
         else
-          push!(C, Gaussian(j, μ[j], isnan(σ[j]) || σ[j] == 0 ? 0.05 : σ[j]))
+          push!(C, Gaussian(j, μ[j], isnan(σ[j]) || σ[j] == 0 ? 0.05 : σ[j]*σ[j]))
         end
       end
     else
@@ -348,7 +543,6 @@ function learn_only_projections!(
       push!(Q, (neg_data, neg_dists, neg))
     end
   end
-  n_count += 1
 end
 
 function learn_projections!(
@@ -359,6 +553,7 @@ function learn_projections!(
   max_height::Int,
   min_examples::Int,
   binarize::Bool,
+  dense_leaves::Bool,
   t_rule::Function,
 )
   c_weight = 1.0/n_projs
@@ -395,16 +590,40 @@ function learn_projections!(
       n_count += 1
       factorize_pos_sub = (n_height > max_height) || (length(I) < min_examples) || same_I
       factorize_neg_sub = (n_height > max_height) || (length(J) < min_examples) || same_J
-      pos = factorize_pos_sub ? Product(n) : Sum(n_projs)
-      neg = factorize_neg_sub ? Product(n) : Sum(n_projs)
       pos_data = view(data, I, :)
       neg_data = view(data, J, :)
       Ch[i] = n_count
-      # println(n_count, ", ", n_count+1, ", ", n_count+2, " ?= ", length(C)+1, ", ", length(C)+2, ", ", length(C)+3)
       P = Sum([n_count + 1, n_count + 2], [λ, 1.0-λ])
-      append!(C, (P, pos, neg))
-      n_count += 2
-      if factorize_pos_sub
+      push!(C, P)
+      if dense_leaves
+        if factorize_pos_sub
+          dense = sample_dense(pos_data, collect(1:n), 1, 3, 2, 2, 2; offset = n_count, binary = binarize)
+          n_count += length(dense)
+          append!(C, dense)
+          pos = dense[1]
+        else
+          pos = Sum(n_projs)
+          n_count += 1
+          push!(C, pos)
+        end
+        if factorize_neg_sub
+          dense = sample_dense(neg_data, collect(1:n), 1, 3, 2, 2, 2; offset = n_count, binary = binarize)
+          n_count += length(dense)
+          append!(C, dense)
+          neg = dense[1]
+        else
+          neg = Sum(n_projs)
+          n_count += 1
+          push!(C, neg)
+        end
+      else
+        pos = factorize_pos_sub ? Product(n) : Sum(n_projs)
+        neg = factorize_neg_sub ? Product(n) : Sum(n_projs)
+        n_count += 2
+        append!(C, (pos, neg))
+      end
+      # println(n_count, ", ", n_count+1, ", ", n_count+2, " ?= ", length(C)+1, ", ", length(C)+2, ", ", length(C)+3)
+      if !dense_leaves && factorize_pos_sub
         if binarize
           θ = vec(sum(pos_data; dims = 1)) / length(I)
         else
@@ -422,14 +641,14 @@ function learn_projections!(
             append!(C, (B, ⊥, ⊤))
             n_count += 2
           else
-            push!(C, Gaussian(j, μ[j], isnan(σ[j]) || σ[j] == 0 ? 0.05 : σ[j]))
+            push!(C, Gaussian(j, μ[j], isnan(σ[j]) || σ[j] == 0 ? 0.05 : σ[j]*σ[j]))
           end
         end
-      else
+      elseif !factorize_pos_sub
         pos_dists = isnothing(dists) ? nothing : view(dists, I, I)
         push!(Q, (pos_data, pos_dists, pos))
       end
-      if factorize_neg_sub
+      if !dense_leaves && factorize_neg_sub
         if binarize
           θ = vec(sum(neg_data; dims = 1)) / length(J)
         else
@@ -448,10 +667,10 @@ function learn_projections!(
             append!(C, (B, ⊥, ⊤))
             n_count += 2
           else
-            push!(C, Gaussian(j, μ[j], isnan(σ[j]) || σ[j] == 0 ? 0.05 : σ[j]))
+            push!(C, Gaussian(j, μ[j], isnan(σ[j]) || σ[j] == 0 ? 0.05 : σ[j]*σ[j]))
           end
         end
-      else
+      elseif !factorize_neg_sub
         neg_dists = isnothing(dists) ? nothing : view(dists, J, J)
         push!(Q, (neg_data, neg_dists, neg))
       end

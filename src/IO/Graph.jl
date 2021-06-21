@@ -167,9 +167,9 @@ end
 
 Reads network from file. Assume 1-based indexing for node ids and values at indicator nodes. Set offset = 1 if these values are 0-based instead. If `ind_offset = 1`, subtract by one values for indicators.
 """
-function Circuit(filename::String; offset::Integer = 0)
+function Circuit(filename::String; offset::Integer = 0, ind_offset::Integer = 0)
   circ = open(filename) do file
-    return circ = Circuit(file, offset = offset)
+    return circ = Circuit(file; offset, ind_offset)
   end
   return circ
 end
@@ -210,8 +210,11 @@ function Circuit(io::IO = stdin; offset::Integer = 0, ind_offset::Integer = 0)
         value = parse(Float64, fields[4]) + offset - ind_offset
         node = Indicator(varid, value)
       elseif nodetype == 'g'
-        # TODO: read Gaussian leaves
-        error("Reading of gaussian nodes is not implemented!")
+        varid = parse(Int, fields[3]) + offset
+        μ = parse(Float64, fields[4])
+        σ = parse(Float64, fields[5])
+        if σ == 0 σ = 0.001 end
+        node = Gaussian(varid, μ, σ*σ)
       end
       nodes[nodeid] = node
     end
@@ -258,13 +261,13 @@ function todot(io::IO, circ::Circuit)
       end
     elseif isa(circ[i], Product)
       println(io, "n$i [shape=circle,style=filled,color=\"#b0db51\",label=\"×\",margin=0.05];")
-    elseif isa(circ[i], LeafNode)
+    elseif isa(circ[i], Leaf)
       println(
         io,
         "n$i [shape=circle,rank=sink,style=filled,color=\"#02a1d8\",label=\"X$(circ[i].scope)\",margin=0.05];",
       )
     end
-    if !isa(circ[i], LeafNode)
+    if !isa(circ[i], Leaf)
       print(io, "n$i -> { ")
       for j in children(circ, i)
         print(io, "n$j; ")
