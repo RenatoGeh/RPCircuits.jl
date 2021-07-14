@@ -8,3 +8,5 @@ using RPCircuits
   include("test_eval.jl")
 end
 
+include("test_vtree.jl")
+
