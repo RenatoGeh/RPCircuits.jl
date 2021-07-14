@@ -30,7 +30,7 @@ function twenty_datasets(name::String; as_df::Bool = true)::Union{Tuple{DataFram
       strict = true,
     )
     # make sure the data is backed by a `BitArray`
-    return as_df ? DataFrame(BitArray(Matrix{Bool}(dataframe))) : Matrix{Bool}(dataframe)
+    return as_df ? DataFrame(BitArray(Matrix{Bool}(dataframe)), :auto) : Matrix{Bool}(dataframe)
   end
   train = load("train")
   valid = load("valid")
