@@ -85,8 +85,8 @@ function run_reg_em()
     end
     LL[data_idx] = -NLL(C, T)
     S[data_idx] = count_nodes(C, T)
-    tee("LL: ", string(LL[data_idx]))
-    tee("Size: ", string(S[data_idx]))
+    tee(out, "LL: " * string(LL[data_idx]))
+    tee(out, "Size: " * string(S[data_idx]))
     close(out_data)
   end
   println(LL)
