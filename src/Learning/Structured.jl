@@ -1,18 +1,25 @@
 function learn_structured(S::Matrix{<:Real}; n_projs::Int = 3, max_height::Int = -1,
     min_examples::Int = 30, binarize::Bool = false, t_proj::Symbol = :max, trials::Int = 5,
-    dense_leaves::Bool = false, r::Real = 2.0, c::Real  = 1.0)::Circuit
-  m = size(S, 2)
+    dense_leaves::Bool = false, r::Real = 2.0, c::Real = 1.0)::Circuit
+  m = size(S, 1)
   if max_height < 0 max_height = floor(Int, sqrt(m)) end
   D = DataFrame(S, :auto)
   Sc = propertynames(D)
   C = Vector{Node}()
-  rule = t_proj == :max ? x -> max_rule(x, r, trials) : x -> sid_rule(x, c, trials)
-  learn_mix_structured(C, D, Sc, n_projs, rule, max_height, min_examples, binarize)
+  rule = t_proj == :max ? (x -> max_rule(x, r, trials)) : (x -> sid_rule(x, c, trials))
+  learn_mix_structured(C, D, Sc, n_projs, rule, max_height, min_examples, binarize, dense_leaves)
   return Circuit(C; as_ref = true)
 end
 export learn_structured
 
-function partition_by(R::Function, M::AbstractMatrix{<:Real})::Tuple{Float64, Vector{Int}, Vector{Int}, Bool, Bool}
+function partition_by(R::Union{Function, Nothing},
+    M::AbstractMatrix{<:Real})::Tuple{Float64, Vector{Int}, Vector{Int}, Bool, Bool}
+  if isnothing(R)
+    n = size(M, 1)
+    λ, k = 0.5, n ÷ 2
+    I, J = collect(1:k), collect(k:n)
+    return λ, I, J, true, true
+  end
   λ = 0
   I, J = Vector{Int}(), Vector{Int}()
   r_I, r_J = nothing, nothing
@@ -66,12 +73,13 @@ function random_split(D::AbstractDataFrame, Sc::Vector{Symbol}, M::AbstractMatri
 end
 
 function factorize_random_split(S::AbstractDataFrame, Z::Vector{Symbol}, M::AbstractMatrix{<:Real},
-    n_count::Int, binarize::Bool, C::Vector{Node}, pa::Product, n_projs::Int,
+    n_count::Int, binarize::Bool, C::Vector{Node}, pa::Product, n_projs::Int, V::Dict{Symbol, Int},
     Q::Vector{Tuple{AbstractDataFrame, AbstractMatrix{<:Real}, Vector{Symbol}, Sum}})::Int
   S_1, A_1, Z_1, S_2, A_2, Z_2 = random_split(S, Z, M)
+  n_count += 1
+  pa.children[1] = n_count
   if length(Z_1) == 1
     v = V[first(Z_1)]
-    n_count += 1
     if binarize
       θ = mean(A_1)
       ⊥, ⊤ = Indicator(v, 0), Indicator(v, 1)
@@ -83,15 +91,14 @@ function factorize_random_split(S::AbstractDataFrame, Z::Vector{Symbol}, M::Abst
       push!(C, Gaussian(v, μ, isnan(σ) || σ == 0 ? 0.05 : σ*σ))
     end
   else
-    n_count += 1
     s = Sum(n_projs)
     push!(C, s)
-    pa.children[1] = n_count
     push!(Q, (S_1, A_1, Z_1, s))
   end
+  n_count += 1
+  pa.children[2] = n_count
   if length(Z_2) == 2
     v = V[first(Z_2)]
-    n_count += 1
     if binarize
       θ = mean(A_2)
       ⊥, ⊤ = Indicator(v, 0), Indicator(v, 1)
@@ -103,17 +110,15 @@ function factorize_random_split(S::AbstractDataFrame, Z::Vector{Symbol}, M::Abst
       push!(C, Gaussian(v, μ, isnan(σ) || σ == 0 ? 0.05 : σ*σ))
     end
   else
-    n_count += 1
     s = Sum(n_projs)
     push!(C, s)
-    pa.children[2] = n_count
     push!(Q, (S_2, A_2, Z_2, s))
   end
   return n_count
 end
 
 function learn_mix_structured(C::Vector{Node}, D::DataFrame, Sc::Vector{Symbol}, n_projs::Int,
-    t_rule::Function, max_height::Int, min_examples::Int, binarize::Bool)
+    t_rule::Function, max_height::Int, min_examples::Int, binarize::Bool, dense_leaves::Bool)
   c_weight = 1.0/n_projs
   push!(C, Sum(n_projs))
   Q = Tuple{AbstractDataFrame, AbstractMatrix{<:Real}, Vector{Symbol}, Sum}[(view(D, :, :), Matrix(D), Sc, first(C))]
@@ -126,7 +131,6 @@ function learn_mix_structured(C::Vector{Node}, D::DataFrame, Sc::Vector{Symbol},
     Σ.weights .= fill(c_weight, n_projs)
     n_height += 1
     for i ∈ 1:n_projs
-      println("1: ", n_count, ", ", length(C))
       λ, I, J, same_I, same_J = partition_by(t_rule(M), M)
       factorize_pos_sub = (n_height > max_height) || (length(I) < min_examples) || same_I
       factorize_neg_sub = (n_height > max_height) || (length(J) < min_examples) || same_J
@@ -136,18 +140,41 @@ function learn_mix_structured(C::Vector{Node}, D::DataFrame, Sc::Vector{Symbol},
       K[i] = n_count
       P = Sum([n_count + 1, n_count + 2], [λ, 1.0-λ])
       push!(C, P)
-      println("2: ", n_count, ", ", length(C))
-      pos = factorize_pos_sub ? Product(n) : Product(2)
-      neg = factorize_neg_sub ? Product(n) : Product(2)
-      n_count += 2
-      append!(C, (pos, neg))
-      println("3: ", n_count, ", ", length(C))
-      if factorize_pos_sub n_count = factorize_sub(binarize, pos_mat, I, Z, V, C, n_count, pos)
-      else n_count = factorize_random_split(pos_data, Z, pos_mat, n_count, binarize, C, pos, n_projs, Q) end
-      println("4: ", n_count, ", ", length(C))
-      if factorize_neg_sub n_count = factorize_sub(binarize, neg_mat, J, Z, V, C, n_count, neg)
-      else n_count = factorize_random_split(neg_data, Z, neg_mat, n_count, binarize, C, neg, n_projs, Q) end
-      println("5: ", n_count, ", ", length(C))
+      if dense_leaves
+        if factorize_pos_sub
+          dense = sample_dense(pos_mat, collect(1:n), 1, 3, 2, 2, 2; offset = n_count,
+                               binary = binarize, V = x -> V[Z[x]])
+          n_count += length(dense)
+          append!(C, dense)
+          pos = first(dense)
+        else
+          pos = Product(2)
+          n_count += 1
+          push!(C, pos)
+          n_count = factorize_random_split(pos_data, Z, pos_mat, n_count, binarize, C, pos, n_projs, V, Q)
+        end
+        if factorize_neg_sub
+          dense = sample_dense(neg_mat, collect(1:n), 1, 3, 2, 2, 2; offset = n_count,
+                               binary = binarize, V = x -> V[Z[x]])
+          n_count += length(dense)
+          append!(C, dense)
+          neg = first(dense)
+        else
+          neg = Product(2)
+          n_count += 1
+          push!(C, neg)
+          n_count = factorize_random_split(neg_data, Z, neg_mat, n_count, binarize, C, neg, n_projs, V, Q)
+        end
+      else
+        pos = factorize_pos_sub ? Product(n) : Product(2)
+        neg = factorize_neg_sub ? Product(n) : Product(2)
+        n_count += 2
+        append!(C, (pos, neg))
+        if factorize_pos_sub n_count = factorize_sub(binarize, pos_mat, I, Z, V, C, n_count, pos)
+        else n_count = factorize_random_split(pos_data, Z, pos_mat, n_count, binarize, C, pos, n_projs, V, Q) end
+        if factorize_neg_sub n_count = factorize_sub(binarize, neg_mat, J, Z, V, C, n_count, neg)
+        else n_count = factorize_random_split(neg_data, Z, neg_mat, n_count, binarize, C, neg, n_projs, V, Q) end
+      end
     end
   end
 end

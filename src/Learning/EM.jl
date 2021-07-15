@@ -99,7 +99,8 @@ function update(
         # @assert !isnan(values[j]) "value of node $j is NaN: $(values[j])"
         if isfinite(values[j])
           δ = circ_p[i].weights[k] * diff[i] * exp(values[j] - lv) # improvement
-          @assert isfinite(δ) "improvement to weight ($i,$j):$(circ_p[i].weights[k]) is not finite: $δ, $(diff[i]), $(values[j]), $(exp(values[j]-lv))"
+          # @assert isfinite(δ) "improvement to weight ($i,$j):$(circ_p[i].weights[k]) is not finite: $δ, $(diff[i]), $(values[j]), $(exp(values[j]-lv))"
+          if !isfinite(δ) δ = 0.0 end
         else
           δ = 0.0
         end

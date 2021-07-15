@@ -78,7 +78,7 @@ function max_rule(S::AbstractMatrix{<:Real}, D::AbstractMatrix{Float64}, r::Floa
   μ = median(Z) + δ
   return i::AbstractVector{<:Real} -> dot(i, v) <= μ
 end
-function max_rule(S::AbstractMatrix{<:Real}, r::Float64, trials::Int)::Function
+function max_rule(S::AbstractMatrix{<:Real}, r::Float64, trials::Int)::Union{Function, Nothing}
   n, m = size(S)
   best_diff, best_split = Inf, nothing
   for j ∈ 1:trials
@@ -160,7 +160,7 @@ function sid_rule(S::AbstractMatrix{<:Real}, D::AbstractMatrix{Float64}, c::Floa
   μ = median(Z)
   return x::AbstractVector{<:Real} -> norm(x - me) <= μ
 end
-function sid_rule(S::AbstractMatrix{<:Real}, c::Float64, trials::Int)::Function
+function sid_rule(S::AbstractMatrix{<:Real}, c::Float64, trials::Int)::Union{Function, Nothing}
   n, m = size(S)
   x, y = rand(1:n), rand(1:n-1)
   if x == y y = n end
@@ -226,7 +226,7 @@ function learn_projections(
   dense_leaves::Bool = false,
 )::Circuit
   n, m = size(S)
-  if max_height < 0 max_height = floor(Int, sqrt(m)) end
+  if max_height < 0 max_height = floor(Int, sqrt(n)) end
   C = Vector{Node}()
   if !no_dist
     upper = Matrix{Float64}(undef, n, n)
