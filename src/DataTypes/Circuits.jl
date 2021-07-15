@@ -473,3 +473,67 @@ function binarize!(c::Circuit)
   return nothing
 end
 export binarize!
+
+function scope_dict(C::Circuit)::Dict{UInt, BitSet}
+  φ = Dict{UInt, BitSet}()
+  for (i, n) ∈ Iterators.reverse(enumerate(C))
+    j = UInt(i)
+    if haskey(φ, j) continue end
+    φ[j] = isleaf(n) ? BitSet(scope(n)) : reduce(∪, getindex.(Ref(φ), n.children))
+  end
+  return φ
+end
+
+"""
+Verifies smoothness.
+"""
+function issmooth(C::Circuit; φ::Dict{UInt, BitSet} = Dict{UInt, BitSet}())::Bool
+  assign = isempty(φ)
+  for (i, n) ∈ Iterators.reverse(enumerate(C))
+    j = UInt(i)
+    if assign && haskey(φ, j) continue end
+    if assign && isleaf(n) φ[j] = BitSet(scope(n))
+    elseif !isleaf(n)
+      ch = getindex.(Ref(φ), n.children)
+      if issum(n) && !allequal(ch) return false end
+      assign && (φ[j] = reduce(∪, ch))
+    end
+  end
+  return true
+end
+export issmooth
+
+"""
+Verifies decomposability.
+"""
+function isdecomposable(C::Circuit; φ::Dict{UInt, BitSet} = Dict{UInt, BitSet}())::Bool
+  assign = isempty(φ)
+  for (i, n) ∈ Iterators.reverse(enumerate(C))
+    j = UInt(i)
+    if assign && haskey(φ, j) continue end
+    if assign && isleaf(n)
+      φ[j] = BitSet(scope(n))
+    elseif !isleaf(n)
+      ch = getindex.(Ref(φ), n.children)
+      if isprod(n)
+        Sc = BitSet(first(ch))
+        for i ∈ 2:length(ch)
+          if !isempty(ch[i] ∩ Sc) return false end
+          union!(Sc, ch[i])
+        end
+      end
+      assign && (φ[j] = reduce(∪, ch))
+    end
+  end
+  return true
+end
+export isdecomposable
+
+"""
+Verifies validity.
+"""
+function Base.isvalid(C::Circuit)::Bool
+  φ = scope_dict(C)
+  return issmooth(C; φ = φ) && isdecomposable(C; φ = φ)
+end
+export isvalid

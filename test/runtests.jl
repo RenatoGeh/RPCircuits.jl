@@ -9,4 +9,5 @@ using RPCircuits
 end
 
 include("test_vtree.jl")
+include("test_queries.jl")
 

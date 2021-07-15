@@ -62,3 +62,15 @@ function bincount(Y::AbstractVector{<:Real}, n::Int)::Vector{Float64}
   C /= n
   return C
 end
+
+"""
+Compares if all elements are equal.
+"""
+function allequal(E::AbstractVector)::Bool
+  @assert !isempty(E) "Collection must be non-empty."
+  u = first(E)
+  for i ∈ 2:length(E)
+    if u != E[i] return false end
+  end
+  return true
+end
