@@ -97,7 +97,7 @@ function factorize_random_split(S::AbstractDataFrame, Z::Vector{Symbol}, M::Abst
   end
   n_count += 1
   pa.children[2] = n_count
-  if length(Z_2) == 2
+  if length(Z_2) == 1
     v = V[first(Z_2)]
     if binarize
       θ = mean(A_2)
@@ -138,9 +138,10 @@ function learn_mix_structured(C::Vector{Node}, D::DataFrame, Sc::Vector{Symbol},
       neg_data, neg_mat = view(S, J, :), view(M, J, :)
       n_count += 1
       K[i] = n_count
-      P = Sum([n_count + 1, n_count + 2], [λ, 1.0-λ])
+      P = Sum([0, 0], [λ, 1.0-λ])
       push!(C, P)
       if dense_leaves
+        P.children[1] = n_count+1
         if factorize_pos_sub
           dense = sample_dense(pos_mat, collect(1:n), 1, 3, 2, 2, 2; offset = n_count,
                                binary = binarize, V = x -> V[Z[x]])
@@ -153,6 +154,7 @@ function learn_mix_structured(C::Vector{Node}, D::DataFrame, Sc::Vector{Symbol},
           push!(C, pos)
           n_count = factorize_random_split(pos_data, Z, pos_mat, n_count, binarize, C, pos, n_projs, V, Q)
         end
+        P.children[2] = n_count+1
         if factorize_neg_sub
           dense = sample_dense(neg_mat, collect(1:n), 1, 3, 2, 2, 2; offset = n_count,
                                binary = binarize, V = x -> V[Z[x]])
