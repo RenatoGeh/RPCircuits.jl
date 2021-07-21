@@ -62,6 +62,9 @@ function Vtree(n::Integer, how::Symbol; scope::AbstractArray{<:Integer} = shuffl
   return passdown(scope)
 end
 
+@inline isleaf(v::Vtree)::Bool = v isa VtreeLeaf
+Base.show(io::IO, v::Vtree) = print(io, isleaf(v) ? "Vtree($(v.var))" : "Vtree($(scope(v.left)), $(scope(v.right)))")
+
 function Base.collect(V::Vtree)::Vector{Vtree}
   C = Vector{Vtree}()
   function passdown(V::Vtree)

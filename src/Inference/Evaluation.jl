@@ -46,7 +46,8 @@ function logpdf(circ::Circuit, X::Data)::Float64
   values = Array{Float64}(undef, length(circ), Threads.nthreads())
   s = Threads.Atomic{Float64}(0.0)
   Threads.@threads for i in 1:size(X, 1)
-    Threads.atomic_add!(s, logpdf!(view(values, :, Threads.threadid()), circ, view(X, i, :)))
+    v = logpdf!(view(values, :, Threads.threadid()), circ, view(X, i, :))
+    Threads.atomic_add!(s, v)
   end
   return s[]
 end

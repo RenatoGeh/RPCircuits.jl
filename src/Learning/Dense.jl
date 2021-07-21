@@ -56,14 +56,14 @@ end
 
 function compile_regiongraph(data::AbstractMatrix{<:Real}, Sc::AbstractVector{<:Integer},
     root::RootRegion, C::Int, D::Int, R::Int, S::Int, I::Int; offset::Integer = 0,
-    binary::Bool = true, V::Function = x -> x)::Circuit
+    binary::Bool = true, V::Function = x -> x, pseudocount::Int = 1)::Circuit
   n_prods_sums = S*S
   n_prods_leaves = I*I
   node_id = offset + C
   if binary
     neg_leaves = [Indicator(V(x), 0) for x ∈ Sc]
     pos_leaves = [Indicator(V(x), 1) for x ∈ Sc]
-    θ = vec(sum(data; dims = 1)) / size(data, 1)
+    θ = (vec(sum(data; dims = 1)) .+ pseudocount) / (size(data, 1)+pseudocount)
   else
     μ = mean(data; dims = 1)
     σ = std(data; dims = 1)
@@ -165,8 +165,10 @@ Generates a random dense circuit.
 See "Random Sum-Product Networks: A Simple and Effective Approach to Probabilistic Deep Learning", Peharz et al, UAI 2019
 """
 @inline function sample_dense(data::AbstractMatrix{<:Real}, Sc::AbstractVector{<:Integer}, C::Int,
-    D::Int, R::Int, S::Int, I::Int; offset::Int = 0, binary::Bool = true, V::Function = x -> x)::Circuit
-  return compile_regiongraph(data, Sc, sample_regiongraph(Sc, C, D, R, S, I), C, D, R, S, I; offset, binary, V)
+    D::Int, R::Int, S::Int, I::Int; offset::Int = 0, binary::Bool = true, V::Function = x -> x,
+    pseudocount::Int = 1)::Circuit
+  return compile_regiongraph(data, Sc, sample_regiongraph(Sc, C, D, R, S, I), C, D, R, S, I;
+                             offset, binary, V, pseudocount)
 end
 export sample_dense
 

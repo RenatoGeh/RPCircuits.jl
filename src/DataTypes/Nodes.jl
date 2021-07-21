@@ -9,7 +9,7 @@ abstract type Inner <: Node end
 """
 Sum node data type
 """
-struct Sum <: Inner
+mutable struct Sum <: Inner
   children::Vector{UInt}
   weights::Vector{Float64}
   # Sum() = new(Vector{UInt}(),Vector{Float64}())

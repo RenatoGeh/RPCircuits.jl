@@ -213,17 +213,18 @@ Learns a Random Projection Circuit by sampling `n_projs` projections of type `t_
 """
 function learn_projections(
   S::AbstractMatrix{<:Real};
-  c::Float64 = 1.0,
-  r::Float64 = 2.0,
-  n_projs::Int = 3,
+  c::Real = 1.0,
+  r::Real = 2.0,
+  n_projs::Integer = 3,
   t_proj::Symbol = :max,
-  max_height::Int = -1,
-  min_examples::Int = 30,
+  max_height::Integer = -1,
+  min_examples::Integer = 30,
   binarize::Bool = false,
   t_mix::Symbol = :all,
   no_dist::Bool = true,
-  trials::Int = 5,
+  trials::Integer = 5,
   dense_leaves::Bool = false,
+  pseudocount::Integer = 1
 )::Circuit
   n, m = size(S)
   if max_height < 0 max_height = floor(Int, sqrt(n)) end
@@ -244,11 +245,11 @@ function learn_projections(
   elseif t_mix == :alt learn_func = learn_alt_projections!
   else learn_func = learn_projections! end
   if t_proj == :mean
-    learn_func(C, S, D, n_projs, max_height, min_examples, binarize, dense_leaves, (x, y) -> mean_rule(x, y, c))
+    learn_func(C, S, D, n_projs, max_height, min_examples, binarize, dense_leaves, pseudocount, (x, y) -> mean_rule(x, y, c))
   elseif t_proj == :max
-    learn_func(C, S, D, n_projs, max_height, min_examples, binarize, dense_leaves, (x, y) -> max_rule(x, r, trials))
+    learn_func(C, S, D, n_projs, max_height, min_examples, binarize, dense_leaves, pseudocount, (x, y) -> max_rule(x, r, trials))
   else
-    learn_func(C, S, D, n_projs, max_height, min_examples, binarize, dense_leaves, (x, y) -> sid_rule(x, c, trials))
+    learn_func(C, S, D, n_projs, max_height, min_examples, binarize, dense_leaves, pseudocount, (x, y) -> sid_rule(x, c, trials))
   end
   return Circuit(C; as_ref = true)
 end
@@ -263,7 +264,8 @@ function learn_alt_projections!(
   min_examples::Int,
   binarize::Bool,
   dense_leaves::Bool,
-  t_rule::Function,
+  pseudocount::Int,
+  t_rule::Function
 )
   c_weight = 1.0/n_projs
   n_count = 1
@@ -448,22 +450,22 @@ function learn_only_projections!(
   min_examples::Int,
   binarize::Bool,
   dense_leaves::Bool,
-  t_rule::Function,
+  pseudocount::Int,
+  t_rule::Function
 )
   n_count = 1
-  n_height = 0
   n = size(S, 2)
   root = Sum(collect(2:n_projs+1), fill(1/n_projs, n_projs))
   push!(C, root)
-  Q = Vector{Tuple{AbstractMatrix{<:Real}, Union{AbstractMatrix{Float64}, Nothing}, Node}}()
+  Q = Vector{Tuple{AbstractMatrix{<:Real}, Union{AbstractMatrix{Float64}, Nothing}, Node, Int}}()
   for i ∈ 1:n_projs
     s = Sum(2)
     push!(C, s)
-    push!(Q, (S, D, s))
+    push!(Q, (S, D, s, 0))
   end
   n_count += n_projs
   while !isempty(Q)
-    data, dists, Σ = popfirst!(Q)
+    data, dists, Σ, n_height = popfirst!(Q)
     m = size(data, 1)
     n_height += 1
     R = t_rule(data, dists)
@@ -516,7 +518,7 @@ function learn_only_projections!(
       end
     else
       pos_dists = isnothing(dists) ? nothing : view(dists, I, I)
-      push!(Q, (pos_data, pos_dists, pos))
+      push!(Q, (pos_data, pos_dists, pos, n_height))
     end
     if factorize_neg_sub
       if binarize
@@ -540,7 +542,7 @@ function learn_only_projections!(
       end
     else
       neg_dists = isnothing(dists) ? nothing : view(dists, J, J)
-      push!(Q, (neg_data, neg_dists, neg))
+      push!(Q, (neg_data, neg_dists, neg, n_height))
     end
   end
 end
@@ -554,15 +556,15 @@ function learn_projections!(
   min_examples::Int,
   binarize::Bool,
   dense_leaves::Bool,
-  t_rule::Function,
+  pseudocount::Int,
+  t_rule::Function
 )
   c_weight = 1.0/n_projs
   n_count = 1
-  n_height = 0
   n = size(S, 2)
-  Q = Tuple{AbstractMatrix{<:Real}, Union{AbstractMatrix{Float64}, Nothing}, Node}[(S, D, Sum(n_projs))]
+  Q = Tuple{AbstractMatrix{<:Real}, Union{AbstractMatrix{Float64}, Nothing}, Node, Int}[(S, D, Sum(n_projs), 0)]
   while !isempty(Q)
-    data, dists, Σ = popfirst!(Q)
+    data, dists, Σ, n_height = popfirst!(Q)
     m = size(data, 1)
     n_height += 1
     push!(C, Σ)
@@ -586,7 +588,7 @@ function learn_projections!(
           elseif same_J same_J = (r_J == x) end
         end
       end
-      λ /= m
+      λ = (λ+pseudocount)/(m+pseudocount)
       n_count += 1
       factorize_pos_sub = (n_height > max_height) || (length(I) < min_examples) || same_I
       factorize_neg_sub = (n_height > max_height) || (length(J) < min_examples) || same_J
@@ -597,7 +599,8 @@ function learn_projections!(
       push!(C, P)
       if dense_leaves
         if factorize_pos_sub
-          dense = sample_dense(pos_data, collect(1:n), 1, 3, 2, 2, 2; offset = n_count, binary = binarize)
+          dense = sample_dense(pos_data, collect(1:n), 1, 3, 2, 2, 2; offset = n_count,
+                               binary = binarize, pseudocount = pseudocount)
           n_count += length(dense)
           append!(C, dense)
           pos = dense[1]
@@ -607,7 +610,8 @@ function learn_projections!(
           push!(C, pos)
         end
         if factorize_neg_sub
-          dense = sample_dense(neg_data, collect(1:n), 1, 3, 2, 2, 2; offset = n_count, binary = binarize)
+          dense = sample_dense(neg_data, collect(1:n), 1, 3, 2, 2, 2; offset = n_count,
+                               binary = binarize, pseudocount = pseudocount)
           n_count += length(dense)
           append!(C, dense)
           neg = dense[1]
@@ -620,7 +624,7 @@ function learn_projections!(
         pos = factorize_pos_sub ? Product(n) : Sum(n_projs)
         neg = factorize_neg_sub ? Product(n) : Sum(n_projs)
         n_count += 2
-        append!(C, (pos, neg))
+        append!(C, (pos, neg, n_height))
       end
       # println(n_count, ", ", n_count+1, ", ", n_count+2, " ?= ", length(C)+1, ", ", length(C)+2, ", ", length(C)+3)
       if !dense_leaves && factorize_pos_sub
@@ -646,7 +650,7 @@ function learn_projections!(
         end
       elseif !factorize_pos_sub
         pos_dists = isnothing(dists) ? nothing : view(dists, I, I)
-        push!(Q, (pos_data, pos_dists, pos))
+        push!(Q, (pos_data, pos_dists, pos, n_height))
       end
       if !dense_leaves && factorize_neg_sub
         if binarize
@@ -672,7 +676,7 @@ function learn_projections!(
         end
       elseif !factorize_neg_sub
         neg_dists = isnothing(dists) ? nothing : view(dists, J, J)
-        push!(Q, (neg_data, neg_dists, neg))
+        push!(Q, (neg_data, neg_dists, neg, n_height))
       end
     end
     n_count += 1
