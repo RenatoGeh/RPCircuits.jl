@@ -193,7 +193,7 @@ function sid_rule(S::AbstractMatrix{<:Real}, c::Float64, trials::Int)::Union{Fun
       P, Q = select(f, S)
       d_P, d_Q = avgdiam(P), avgdiam(Q)
       d = abs(d_P*d_P-d_Q*d_Q)
-      if d < best_diff best_diff, best_split = d, f end
+      if isnothing(best_split) || (d < best_diff) best_diff, best_split = d, f end
     end
     return best_split
   end
@@ -255,192 +255,6 @@ function learn_projections(
 end
 export learn_projections
 
-function learn_alt_projections!(
-  C::Vector{Node},
-  S::AbstractMatrix{<:Real},
-  D::Union{AbstractMatrix{Float64}, Nothing},
-  n_projs::Int,
-  max_height::Int,
-  min_examples::Int,
-  binarize::Bool,
-  dense_leaves::Bool,
-  pseudocount::Int,
-  t_rule::Function
-)
-  c_weight = 1.0/n_projs
-  n_count = 1
-  n_height = 0
-  n = size(S, 2)
-  Q = Tuple{AbstractMatrix{<:Real}, Union{AbstractMatrix{Float64}, Nothing}, Node, Int}[(S, D, Sum(n_projs), 1)]
-  while !isempty(Q)
-    data, dists, Σ, alt_level = popfirst!(Q)
-    m = size(data, 1)
-    n_height += 1
-    if alt_level % 2 == 1
-      push!(C, Σ)
-      Ch = Σ.children
-      Σ.weights .= fill(c_weight, n_projs)
-      for i in 1:n_projs
-        R = t_rule(data, dists)
-        λ = 0
-        I, J = Vector{Int}(), Vector{Int}()
-        r_I, r_J = nothing, nothing
-        same_I, same_J = true, true
-        for (j, x) in enumerate(eachrow(data))
-          if R(x)
-            λ += 1
-            push!(I, j)
-            if isnothing(r_I) r_I = x
-            elseif same_I same_I = (r_I == x) end
-          else
-            push!(J, j)
-            if isnothing(r_J) r_J = x
-            elseif same_J same_J = (r_J == x) end
-          end
-        end
-        λ /= m
-        n_count += 1
-        factorize_pos_sub = (n_height > max_height) || (length(I) < min_examples) || same_I
-        factorize_neg_sub = (n_height > max_height) || (length(J) < min_examples) || same_J
-        pos = factorize_pos_sub ? Product(n) : Sum(2)
-        neg = factorize_neg_sub ? Product(n) : Sum(2)
-        pos_data = view(data, I, :)
-        neg_data = view(data, J, :)
-        Ch[i] = n_count
-        P = Sum([n_count + 1, n_count + 2], [λ, 1.0-λ])
-        append!(C, (P, pos, neg))
-        n_count += 2
-        if factorize_pos_sub
-          if binarize
-            θ = vec(sum(pos_data; dims = 1)) / length(I)
-          else
-            μ = mean(pos_data; dims = 1)
-            σ = std(pos_data; dims = 1)
-          end
-          for j in 1:n
-            n_count += 1
-            pos.children[j] = n_count
-            if binarize
-              ⊥ = Indicator(j, 0)
-              ⊤ = Indicator(j, 1)
-              B = Sum([n_count+1, n_count+2], [1-θ[j], θ[j]])
-              append!(C, (B, ⊥, ⊤))
-              n_count += 2
-            else
-              push!(C, Gaussian(j, μ[j], isnan(σ[j]) || σ[j] == 0 ? 0.05 : σ[j]*σ[j]))
-            end
-          end
-        else
-          pos_dists = isnothing(dists) ? nothing : view(dists, I, I)
-          push!(Q, (pos_data, pos_dists, pos, alt_level + 1))
-        end
-        if factorize_neg_sub
-          if binarize
-            θ = vec(sum(neg_data; dims = 1)) / length(J)
-          else
-            μ = mean(neg_data; dims = 1)
-            σ = std(neg_data; dims = 1)
-          end
-          for j in 1:n
-            n_count += 1
-            neg.children[j] = n_count
-            if binarize
-              ⊥ = Indicator(j, 0)
-              ⊤ = Indicator(j, 1)
-              B = Sum([n_count+1, n_count+2], [1-θ[j], θ[j]])
-              append!(C, (B, ⊥, ⊤))
-              n_count += 2
-            else
-              push!(C, Gaussian(j, μ[j], isnan(σ[j]) || σ[j] == 0 ? 0.05 : σ[j]*σ[j]))
-            end
-          end
-        else
-          neg_dists = isnothing(dists) ? nothing : view(dists, J, J)
-          push!(Q, (neg_data, neg_dists, neg, alt_level + 1))
-        end
-      end
-      n_count += 1
-    else
-      R = t_rule(data, dists)
-      λ = 0
-      I, J = Vector{Int}(), Vector{Int}()
-      r_I, r_J = nothing, nothing
-      same_I, same_J = true, true
-      for (j, x) in enumerate(eachrow(data))
-        if R(x)
-          λ += 1
-          push!(I, j)
-          if isnothing(r_I) r_I = x
-          elseif same_I same_I = (r_I == x) end
-        else
-          push!(J, j)
-          if isnothing(r_J) r_J = x
-          elseif same_J same_J = (r_J == x) end
-        end
-      end
-      λ /= m
-      factorize_pos_sub = (n_height > max_height) || (length(I) < min_examples) || same_I
-      factorize_neg_sub = (n_height > max_height) || (length(J) < min_examples) || same_J
-      pos = factorize_pos_sub ? Product(n) : Sum(n_projs)
-      neg = factorize_neg_sub ? Product(n) : Sum(n_projs)
-      pos_data = view(data, I, :)
-      neg_data = view(data, J, :)
-      Σ.children[1], Σ.children[2] = n_count+1, n_count+2
-      Σ.weights[1], Σ.weights[2] = λ, 1.0-λ
-      n_count += 2
-      append!(C, (pos, neg))
-      if factorize_pos_sub
-        if binarize
-          θ = vec(sum(pos_data; dims = 1)) / length(I)
-        else
-          μ = mean(pos_data; dims = 1)
-          σ = std(pos_data; dims = 1)
-        end
-        for j in 1:n
-          n_count += 1
-          pos.children[j] = n_count
-          if binarize
-            ⊥ = Indicator(j, 0)
-            ⊤ = Indicator(j, 1)
-            B = Sum([n_count+1, n_count+2], [1-θ[j], θ[j]])
-            append!(C, (B, ⊥, ⊤))
-            n_count += 2
-          else
-            push!(C, Gaussian(j, μ[j], isnan(σ[j]) || σ[j] == 0 ? 0.05 : σ[j]*σ[j]))
-          end
-        end
-      else
-        pos_dists = isnothing(dists) ? nothing : view(dists, I, I)
-        push!(Q, (pos_data, pos_dists, pos, alt_level + 1))
-      end
-      if factorize_neg_sub
-        if binarize
-          θ = vec(sum(neg_data; dims = 1)) / length(J)
-        else
-          μ = mean(neg_data; dims = 1)
-          σ = std(neg_data; dims = 1)
-        end
-        for j in 1:n
-          n_count += 1
-          neg.children[j] = n_count
-          if binarize
-            ⊥ = Indicator(j, 0)
-            ⊤ = Indicator(j, 1)
-            B = Sum([n_count+1, n_count+2], [1-θ[j], θ[j]])
-            append!(C, (B, ⊥, ⊤))
-            n_count += 2
-          else
-            push!(C, Gaussian(j, μ[j], isnan(σ[j]) || σ[j] == 0 ? 0.05 : σ[j]*σ[j]))
-          end
-        end
-      else
-        neg_dists = isnothing(dists) ? nothing : view(dists, J, J)
-        push!(Q, (neg_data, neg_dists, neg, alt_level + 1))
-      end
-    end
-  end
-end
-
 function learn_only_projections!(
   C::Vector{Node},
   S::AbstractMatrix{<:Real},
@@ -488,15 +302,42 @@ function learn_only_projections!(
     λ /= m
     factorize_pos_sub = (n_height > max_height) || (length(I) < min_examples) || same_I
     factorize_neg_sub = (n_height > max_height) || (length(J) < min_examples) || same_J
-    pos = factorize_pos_sub ? Product(n) : Sum(2)
-    neg = factorize_neg_sub ? Product(n) : Sum(2)
     pos_data = view(data, I, :)
     neg_data = view(data, J, :)
-    Σ.children[1], Σ.children[2] = n_count+1, n_count+2
     Σ.weights[1], Σ.weights[2] = λ, 1.0-λ
-    n_count += 2
-    append!(C, (pos, neg))
-    if factorize_pos_sub
+    if dense_leaves
+      Σ.children[1] = n_count+1
+      if factorize_pos_sub
+        dense = sample_dense(pos_data, collect(1:n), 1, 3, 2, 2, 2; offset = n_count,
+                             binary = binarize, pseudocount = pseudocount)
+        n_count += length(dense)
+        append!(C, dense)
+        pos = dense[1]
+      else
+        pos = Sum(2)
+        n_count += 1
+        push!(C, pos)
+      end
+      Σ.children[2] = n_count+1
+      if factorize_neg_sub
+        dense = sample_dense(neg_data, collect(1:n), 1, 3, 2, 2, 2; offset = n_count,
+                             binary = binarize, pseudocount = pseudocount)
+        n_count += length(dense)
+        append!(C, dense)
+        neg = dense[1]
+      else
+        neg = Sum(2)
+        n_count += 1
+        push!(C, neg)
+      end
+    else
+      Σ.children[1], Σ.children[2] = n_count+1, n_count+2
+      pos = factorize_pos_sub ? Product(n) : Sum(2)
+      neg = factorize_neg_sub ? Product(n) : Sum(2)
+      n_count += 2
+      append!(C, (pos, neg))
+    end
+    if !dense_leaves && factorize_pos_sub
       if binarize
         θ = vec(sum(pos_data; dims = 1)) / length(I)
       else
@@ -516,11 +357,11 @@ function learn_only_projections!(
           push!(C, Gaussian(j, μ[j], isnan(σ[j]) || σ[j] == 0 ? 0.05 : σ[j]*σ[j]))
         end
       end
-    else
+    elseif !factorize_pos_sub
       pos_dists = isnothing(dists) ? nothing : view(dists, I, I)
       push!(Q, (pos_data, pos_dists, pos, n_height))
     end
-    if factorize_neg_sub
+    if !dense_leaves && factorize_neg_sub
       if binarize
         θ = vec(sum(neg_data; dims = 1)) / length(J)
       else
@@ -540,7 +381,7 @@ function learn_only_projections!(
           push!(C, Gaussian(j, μ[j], isnan(σ[j]) || σ[j] == 0 ? 0.05 : σ[j]*σ[j]))
         end
       end
-    else
+    elseif !factorize_neg_sub
       neg_dists = isnothing(dists) ? nothing : view(dists, J, J)
       push!(Q, (neg_data, neg_dists, neg, n_height))
     end
@@ -595,9 +436,10 @@ function learn_projections!(
       pos_data = view(data, I, :)
       neg_data = view(data, J, :)
       Ch[i] = n_count
-      P = Sum([n_count + 1, n_count + 2], [λ, 1.0-λ])
+      P = Sum([0, 0], [λ, 1.0-λ])
       push!(C, P)
       if dense_leaves
+        P.children[1] = n_count+1
         if factorize_pos_sub
           dense = sample_dense(pos_data, collect(1:n), 1, 3, 2, 2, 2; offset = n_count,
                                binary = binarize, pseudocount = pseudocount)
@@ -609,6 +451,7 @@ function learn_projections!(
           n_count += 1
           push!(C, pos)
         end
+        P.children[2] = n_count+1
         if factorize_neg_sub
           dense = sample_dense(neg_data, collect(1:n), 1, 3, 2, 2, 2; offset = n_count,
                                binary = binarize, pseudocount = pseudocount)
@@ -621,10 +464,11 @@ function learn_projections!(
           push!(C, neg)
         end
       else
+        P.children[1], P.children[2] = n_count+1, n_count+2
         pos = factorize_pos_sub ? Product(n) : Sum(n_projs)
         neg = factorize_neg_sub ? Product(n) : Sum(n_projs)
         n_count += 2
-        append!(C, (pos, neg, n_height))
+        append!(C, (pos, neg))
       end
       # println(n_count, ", ", n_count+1, ", ", n_count+2, " ?= ", length(C)+1, ", ", length(C)+2, ", ", length(C)+3)
       if !dense_leaves && factorize_pos_sub

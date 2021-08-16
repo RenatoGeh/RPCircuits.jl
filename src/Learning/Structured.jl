@@ -10,7 +10,10 @@ function learn_structured(S::Matrix{<:Real}; n_projs::Int = 3, max_height::Int =
   D = DataFrame(S, :auto)
   Sc = propertynames(D)
   rule = t_proj == :max ? (x -> max_rule(x, r, trials)) : (x -> sid_rule(x, c, trials))
-  K = Dict{Vtree, Vector{Sum}}()
+  if residuals
+    if !isnothing(vtree) K = Dict{Vtree, Vector{Sum}}()
+    else K = Dict{BitSet, Vector{Sum}}() end
+  else K = nothing end
   if n_comps > 1
     M = Sum(n_comps)
     M.weights .= fill(1.0/n_comps, n_comps)
@@ -192,7 +195,8 @@ end
 
 function learn_mix_structured(C::Vector{Node}, D::DataFrame, Sc::Vector{Symbol}, n_projs::Int,
     t_rule::Function, max_height::Int, min_examples::Int, binarize::Bool, dense_leaves::Bool,
-    vtree::Union{Nothing, Vtree}, split_t::Symbol; save_layers::Union{Dict{Vtree, Vector{Sum}}, Nothing} = nothing)
+    vtree::Union{Nothing, Vtree}, split_t::Symbol;
+    save_layers::Union{Dict{Vtree, Vector{Sum}}, Dict{BitSet, Vector{Sum}}, Nothing} = nothing)
   c_weight = 1.0/n_projs
   push!(C, Sum(n_projs))
   Q = Tuple{AbstractDataFrame, AbstractMatrix{<:Real}, Vector{Symbol}, Sum, Union{Nothing, Vtree}, Int}[(view(D, :, :), Matrix(D), Sc, C[length(C)], vtree, 0)]
@@ -201,9 +205,15 @@ function learn_mix_structured(C::Vector{Node}, D::DataFrame, Sc::Vector{Symbol},
   for (i, x) ∈ enumerate(Sc) V[i], V[x] = x, i end
   while !isempty(Q)
     S, M, Z, Σ, utree, n_height = popfirst!(Q)
-    if !isnothing(utree) && !isnothing(save_layers)
-      if !haskey(save_layers, utree) save_layers[utree] = Sum[Σ]
-      else push!(save_layers[utree], Σ) end
+    if !isnothing(save_layers)
+      if !isnothing(utree)
+        if !haskey(save_layers, utree) save_layers[utree] = Sum[Σ]
+        else push!(save_layers[utree], Σ) end
+      else
+        sc = BitSet(V[x] for x in Z)
+        if !haskey(save_layers, sc) save_layers[sc] = Sum[Σ]
+        else push!(save_layers[sc], Σ) end
+      end
     end
     n = ncol(S)
     K = Σ.children # components
