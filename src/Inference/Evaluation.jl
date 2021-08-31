@@ -1,10 +1,10 @@
 # Routines for SPN evaluation and sampling
 
 """
-(circ::Circuit)(x::AbstractVector{<:Real})
-(circ::Circuit)(x...)
+(r::Node)(x::AbstractVector{<:Real})
+(r::Node)(x...)
 
-Evaluates the circuit at a given instantiation `x` of the variables.
+Evaluates the circuit rooted at `r` at a given instantiation `x` of the variables.
 Summed-out variables are represented as `NaN`s.
 
 # Parameters
@@ -13,7 +13,7 @@ Summed-out variables are represented as `NaN`s.
 
 # Examples
 
-To compute the probability of `P(b=1)` using circ `S`, use
+To compute the probability of `P(b=1)` using circ rooted at `S`, use
 
 ```@example
 S = Circuit(IOBuffer("1 + 2 0.2 3 0.5 4 0.3\n2 * 5 7\n3 * 5 8\n4 * 6 8\n5 categorical 1 0.6 0.4\n6 categorical 1 0.1 0.9\n7 categorical 2 0.3 0.7\n8 categorical 2 0.8 0.2"));
@@ -21,40 +21,11 @@ println(S([NaN, 2]))
 println(S(NaN, 2))
 ```
 """
-(circ::Circuit)(x::Example) = exp(logpdf(circ, x))
-(circ::Circuit)(x...) = exp(logpdf(circ, [x...]))
+(r::Node)(x::Example) = exp(logpdf(r, x))
+(r::Node)(x...) = exp(logpdf(r, [x...]))
 
 """
-logpdf(circ, X)
-
-Returns the sums of the log-probabilities of instances `x` in `X`. Uses multithreading to speed up
-computations if `JULIA_NUM_THREADS > 1`.
-
-# Parameters
-
-  - `circ`: Sum-Product Network
-  - `X`: matrix of values of variables (integers or reals). Summed-out variables are represented as
-    `NaN`s.
-"""
-function logpdf(circ::Circuit, X::Data)::Float64
-  # single-threaded version
-  if Threads.nthreads() == 1
-    values = Array{Float64}(undef, length(circ))
-    return sum(logpdf!(values, circ, view(X, i, :)) for i in 1:size(X, 1))
-  end
-  # multi-threaded version
-  values = Array{Float64}(undef, length(circ), Threads.nthreads())
-  s = Threads.Atomic{Float64}(0.0)
-  Threads.@threads for i in 1:size(X, 1)
-    v = logpdf!(view(values, :, Threads.threadid()), circ, view(X, i, :))
-    Threads.atomic_add!(s, v)
-  end
-  return s[]
-end
-export logpdf
-
-"""
-logpdf!(values, circ, X)
+    logpdf!(values, circ, X)
 
 Computes log-probabilities of instances `x` in `X` and stores the results in a given vector. Uses
 multithreading to speed up computations.
@@ -65,19 +36,77 @@ multithreading to speed up computations.
   - `circ`: Sum-Product Network
   - `X`: matrix of values of variables (integers or reals). Summed-out variables are represented as `NaN`s.
 """
-function logpdf!(results::AbstractVector{<:Real}, circ::Circuit, X::AbstractMatrix{<:Real})
-  @assert length(results) == size(X, 1)
-  # multi-threaded version
-  values = Array{Float64}(undef, length(circ), Threads.nthreads())
-  Threads.@threads for i in 1:size(X, 1)
-    @inbounds results[i] = logpdf!(view(values, :, Threads.threadid()), circ, view(X, i, :))
+function logpdf!(results::AbstractVector{Float64}, r::Node, X::AbstractMatrix{<:Real})
+  n = size(X, 1)
+  @assert length(results) == n
+  values = [Dict{Node, Float64}() for i ∈ 1:Threads.nthreads()]
+  N = nodes(r)
+  Threads.@threads for i ∈ 1:n
+    @inbounds results[i] = logpdf!(values[Threads.threadid()], N, view(X, i, :))
   end
-  return Nothing
+  return nothing
+end
+
+"""
+    logpdf!(values::Dict{Node, Float64}, r::Vector{Node}, x::AbstractVector{<:Real})::Float64
+
+Evaluates the circuit `N` in log domain at configuration `x` and stores values of each node in
+the dictionary `values`.
+"""
+function logpdf!(values::Dict{Node, Float64}, N::Vector{Node}, x::AbstractVector{<:Real})::Float64
+  for n ∈ Iterators.reverse(N)
+    if isprod(n)
+      lval = 0.0
+      for c ∈ n.children lval += values[c] end
+      values[n] = isfinite(lval) ? lval : -Inf
+    elseif issum(n)
+      m = -Inf
+      for c ∈ n.children
+        u = values[c]
+        (u > m) && (m = u)
+      end
+      lval = 0.0
+      for (i, c) ∈ enumerate(n.children) lval += exp(values[c]-m) * n.weights[i] end
+      values[n] = isfinite(lval) ? m + log(lval) : -Inf
+    else
+      values[n] = logpdf(n, x[n.scope])
+    end
+  end
+  return values[first(N)]
 end
 export logpdf!
 
 """
-logpdf(circ, x)
+    logpdf(r::Node, X::Data)
+
+Returns the sums of the log-probabilities of instances `x` in `X`. Uses multithreading to speed up
+computations if `JULIA_NUM_THREADS > 1`.
+
+# Parameters
+
+  - `r`: Sum-Product Network
+  - `X`: matrix of values of variables (integers or reals). Summed-out variables are represented as
+    `NaN`s.
+"""
+function logpdf(r::Node, X::Data)::Float64
+  k = Threads.nthreads()
+  N = nodes(r)
+  if k == 1
+    values = Dict{Node, Float64}()
+    return sum(logpdf!(values, N, view(X, i, :)) for i ∈ 1:size(X, 1))
+  end
+  values = [Dict{Node, Float64}() for i ∈ 1:Threads.nthreads()]
+  s = Threads.Atomic{Float64}(0.0)
+  Threads.@threads for i ∈ 1:n
+    v = logpdf!(values[Threads.threadid()], N, view(X, i, :))
+    Threads.atomic_add!(s, v)
+  end
+  return s[]
+end
+export logpdf
+
+"""
+    logpdf(r::Node, x::AbstractVector{<:Real})::Float64
 
 Evaluates the circuit `circ` in log domain at configuration `x`.
 
@@ -94,133 +123,66 @@ S = Circuit(IOBuffer("1 + 2 0.2 3 0.5 4 0.3\n2 * 5 7\n3 * 5 8\n4 * 6 8\n5 catego
 logpdf(S, [NaN, 2])
 ```
 """
-function logpdf(circ::Circuit, x::AbstractVector{<:Real})::Float64
-  values = Array{Float64}(undef, length(circ))
-  return logpdf!(values, circ, x)
-end
+logpdf(r::Node, x::AbstractVector{<:Real})::Float64 = logpdf!(Dict{Node, Float64}(), nodes(r), x)
 
 """
-logpdf!(values,circ,x)
+    plogpdf!(values::Dict{Node, Float64}, nlayers::Vector{Vector{Node}}, x::AbstractVector{<:Real})::Float64
 
-Evaluates the circuit `circ` in log domain at configuration `x` and stores values of each node in the vector `values`.
-"""
-function logpdf!(values::AbstractVector{Float64}, circ::Circuit, x::AbstractVector{<:Real})::Float64
-  # @assert length(values) == length(circ)
-  # traverse nodes in reverse topological order (bottom-up)
-  @inbounds for i in length(circ):-1:1
-    node = circ[i]
-    if isprod(node)
-      lval = 0.0
-      for j in node.children
-        lval += values[j]
-      end
-      values[i] = isfinite(lval) ? lval : -Inf
-    elseif issum(node)
-      # log-sum-exp trick to improve numerical stability
-      m = -Inf
-      # get maximum incoming value
-      for j in node.children
-        m = values[j] > m ? values[j] : m
-      end
-      lval = 0.0
-      for (k, j) in enumerate(node.children)
-        # ensure exp in only computed on nonpositive arguments (avoid overflow)
-        lval += exp(values[j] - m) * node.weights[k]
-      end
-      # println("m: ", m, ", lval: ", lval)
-      # println("  values: ", values[node.children])
-      # println("  weights: ", node.weights)
-      # if something went wrong (e.g. incoming value is NaN or Inf) return -Inf
-      values[i] = isfinite(lval) ? m + log(lval) : -Inf
-    elseif isproj(node)
-      values[i] = node.hyperplane(x) ? log(node.λ) + values[node.pos] : log(1-node.λ) + values[node.neg]
-      if isnan(values[i])
-        println("Node: ", i)
-        println("  pos: ", node.pos, ", neg: ", node.neg)
-        println("  pos_val: ", values[node.pos], ", neg_val: ", values[node.neg])
-        println("  λ = ", node.λ, ", activated? ", node.hyperplane(x) ? "pos" : "neg")
-      end
-    else # is a leaf node
-      values[i] = logpdf(node, x[node.scope])
-    end
-  end
-  @inbounds return values[1]
-end
-
-"""
-plogpdf!(values,circ,layers,x)
-
-Evaluates the circuit `circ` in log domain at configuration `x` using the scheduling in `nlayers`
-as obtained by the method `layers(circ)`. Stores values of each node in the vector `values`.
+Evaluates the circuit in log domain at configuration `x` using the scheduling in `nlayers` as
+obtained by the method `layers(circ)`. Stores values of each node in the dictionary `values`.
 
 # Parameters
 
-  - `values`: vector to cache node values
-  - `circ`: the sum product network
-  - `nlayers`: Vector of vector of node indices determinig the layers of the `circ`; each node in a layer is computed based on values of nodes in smaller layers.
+  - `values`: dictionary to cache node values
+  - `nlayers`: Vector of vector of nodes determinig the layers of the circuit; each node in a layer is computed based on values of nodes in smaller layers.
   - `x`: Vector containing assignment
 """
 function plogpdf!(
-  values::AbstractVector{Float64},
-  circ::Circuit,
-  nlayers,
-  x::AbstractVector{<:Real},
+    values::Dict{Node, Float64},
+    nlayers::Vector{Vector{Node}},
+    x::AbstractVector{<:Real},
 )::Float64
   # visit layers from last (leaves) to first (root)
   @inbounds for l in length(nlayers):-1:1
     # parallelize computations within layer
-    Threads.@threads for i in nlayers[l]
-      node = circ[i]
-      if isprod(node)
+    Threads.@threads for n in nlayers[l]
+      if isprod(n)
         lval = 0.0
-        for j in node.children
-          lval += values[j]
-        end
+        for c in n.children lval += values[c] end
         values[i] = isfinite(lval) ? lval : -Inf
-      elseif issum(node)
+      elseif issum(n)
         # log-sum-exp trick to improve numerical stability (assumes weights are normalized)
         m = -Inf
         # get maximum incoming value
-        for j in node.children
-          m = values[j] > m ? values[j] : m
-        end
+        for c in n.children (values[c] > m) && (m = values[c]) end
         lval = 0.0
-        for (k, j) in enumerate(node.children)
+        for (i, c) in enumerate(node.children)
           # ensure exp in only computed on nonpositive arguments (avoid overflow)
-          lval += exp(values[j] - m) * node.weights[k]
+          lval += exp(values[c] - m) * node.weights[i]
         end
         # if something went wrong (e.g. incoming value is NaN or Inf) return -Inf, otherwise
         # return maximum plus lval (adding m ensures signficant digits are numerically precise)
-        values[i] = isfinite(lval) ? m + log(lval) : -Inf
+        values[n] = isfinite(lval) ? m + log(lval) : -Inf
       else # is a leaf node
-        values[i] = logpdf(node, x[node.scope])
+        values[n] = logpdf(n, x[n.scope])
       end
     end
   end
-  @inbounds return values[1]
+  return values[first(first(nlayers))]
 end
 export plogpdf!
 
 """
-plogpdf(circ, x)
+    plogpdf(r, x)
 
-Parallelized version of `logpdf(circ, x)`. Set `JULIA_NUM_THREADS` > 1 to make this effective.
+Parallelized version of `logpdf(r, x)`. Set `JULIA_NUM_THREADS` > 1 to make this effective.
 """
-function plogpdf(circ::Circuit, x::AbstractVector{<:Real})::Float64
-  values = Array{Float64}(undef, length(circ))
-  return plogpdf!(values, circ, layers(circ), x)
-end
-@inline function plogpdf(circ::Circuit, X::AbstractMatrix{<:Real})::Float64
-  s = 0.0
-  @inbounds for i ∈ 1:size(X)[1]
-    s += plogpdf(circ, view(X, i, :))
-  end
-  return s
-end
+@inline plogpdf(r::Node, x::AbstractVector{<:Real})::Float64 = plogpdf!(Dict{Node, Float64}, layers(r), x)
+@inline plogpdf(r::Node, X::AbstractMatrix{<:Real})::Float64 = sum(plogpdf(r, view(X, i, :)) for i ∈ 1:size(X, 1))
 export plogpdf
 
 """
-sample(weights)::UInt
+    sample(weights)::UInt
 
 Sample integer with probability proportional to given `weights`.
 
@@ -241,9 +203,9 @@ function sample(weights::AbstractVector{Float64})::UInt
 end
 
 """
-rand(n::Indicator)
-rand(n::Categorical)
-rand(n::Gaussian)
+    rand(n::Indicator)
+    rand(n::Categorical)
+    rand(n::Gaussian)
 
 Sample values from circuit leaves.
 """
@@ -252,66 +214,66 @@ Sample values from circuit leaves.
 @inline Base.rand(n::Gaussian) = n.mean + sqrt(n.variance) * randn()
 
 """
-rand(circ)
+    rand(r::Node)
 
 Returns a sample of values of the variables generated according
-to the probability defined by the network `circ`. Stores the sample
+to the probability defined by the network rooted at `r`. Stores the sample
 as a vector of values
 """
-function Base.rand(circ::Circuit)
-  if length(scope(circ)) > 0
-    numvars = length(scope(circ))
+function Base.rand(r::Node)
+  if length(scope(r)) > 0
+    numvars = length(scope(r))
   else
-    numvars = length(union(n.scope for n in leaves(circ)))
+    numvars = length(union(n.scope for n in leaves(r)))
   end
   a = Vector{Float64}(undef, numvars)
   # sample induced tree
-  queue = [1]
+  queue = Node[r]
   while !isempty(queue)
     n = popfirst!(queue)
-    if issum(circ[n])
+    if issum(n)
       # sample one child to visit
-      c = sample(circ[n].weights)
-      push!(queue, circ[n].children[c])
-    elseif isprod(circ[n])
+      c = sample(n.weights)
+      push!(queue, n.children[c])
+    elseif isprod(n)
       # visit every child
-      append!(queue, children(circ, n))
+      append!(queue, n.children)
     else
       # draw value from node distribution
-      a[circ[n].scope] = rand(circ[n])
+      a[n.scope] = rand(n)
     end
   end
   return a
 end
 
 """
-rand(circ::Circuit, N::Integer)
+    rand(r::Node, N::Integer)
 
 Returns a matrix of samples generated according to the probability
 defined by the network `circ`.
 """
-function Base.rand(circ::Circuit, N::Integer)
-  if length(scope(circ)) > 0
-    numvars = length(scope(circ))
+function Base.rand(r::Node, N::Integer)
+  if length(scope(r)) > 0
+    numvars = length(scope(r))
   else
-    numvars = length(union(n.scope for n in leaves(circ)))
+    numvars = length(union(n.scope for n in leaves(r)))
   end
   Sample = Array{Float64}(undef, N, numvars)
   # get sample
   for i in 1:N
-    queue = [1]
+    queue = Node[r]
     while length(queue) > 0
       n = popfirst!(queue)
-      if issum(circ[n])
+      if issum(n)
         # sample one child to visit
-        c = sample(circ[n].weights) # sparse array to vector inserts 0 at first coordinate
-        push!(queue, circ[n].children[c])
-      elseif isprod(circ[n])
+        c = sample(n.weights) # sparse array to vector inserts 0 at first coordinate
+        push!(queue, n.children[c])
+      elseif isprod(n)
         # visit every child
-        append!(queue, children(circ, n))
+        append!(queue, n.children)
       else
         # draw value from distribution
-        Sample[i, circ[n].scope] = rand(circ[n])
+        Sample[i, n.scope] = rand(n)
       end
     end
   end
@@ -319,47 +281,46 @@ function Base.rand(circ::Circuit, N::Integer)
 end
 
 """
-ncircuits(circ::Circuit)
+    ncircuits(r::Node)::Int
 
-Counts the number of induced circuits of the circuit `circ`.
+Counts the number of induced circuits of the circuit rooted at `r`.
 """
-ncircuits(circ::Circuit) = ncircuits!(Array{Int}(undef, length(circ)), circ)
+ncircuits(r::Node)::Int = ncircuits!(Dict{Node, Int}(), r)
 export ncircuits
 
 """
-ncircuits!(values,circ)
+    ncircuits!(values::Dict{Node, Int}, r::Node)::Int
 
-Counts the number of induced circuits of the circuit `circ`, caching intermediate values.
+Counts the number of induced circuits of the circuit rooted at `r`, caching intermediate values.
 """
-function ncircuits!(values::AbstractVector{Int}, circ::Circuit)
-  @assert length(values) == length(circ)
+function ncircuits!(values::Dict{Node, Int}, r::Node)
   # traverse nodes in reverse topological order (bottom-up)
-  for i in length(circ):-1:1
-    @inbounds node = circ[i]
-    if isa(node, Product)
-      @inbounds values[i] = mapreduce(j -> values[j], *, node.children)
-    elseif isa(node, Sum)
-      @inbounds values[i] = sum(values[node.children])
+  N = nodes(r)
+  for n ∈ Iterators.reverse(N)
+    if isa(n, Product)
+      values[n] = mapreduce(u -> values[u], *, node.children)
+    elseif isa(n, Sum)
+      values[n] = mapreduce(u -> values[u], +, n.children)
     else # is a leaf node
-      @inbounds values[i] = 1
+      values[n] = 1
     end
   end
-  @inbounds values[1]
+  return values[r]
 end
 
 """
-NLL(circ::Circuit,data::AbstractMatrix{<:Real})
+    NLL(r::Node, data::AbstractMatrix{<:Real})
 
 Computes the average negative loglikelihood of a dataset `data` assigned by circ.
 """
-NLL(circ::Circuit, data::AbstractMatrix{<:Real}) = -logpdf(circ, data) / size(data, 1)
+NLL(r::Node, data::AbstractMatrix{<:Real}) = -logpdf(r, data) / size(data, 1)
 export NLL
 
 """
-MAE(S1::Circuit,S2::Circuit,data::AbstractMatrix{<:Real})
+    MAE(S1::Node, S2::Node, data::AbstractMatrix{<:Real})
 
 Computes the Mean Absolute Error of circuits `S1` and `S2` on given `data`.
 """
-MAE(S1::Circuit, S2::Circuit, data::AbstractMatrix{<:Real}) =
+MAE(S1::Node, S2::Node, data::AbstractMatrix{<:Real}) =
   sum(abs(logpdf(S1, view(data, i, :)) - logpdf(S2, view(data, i, :))) for i in 1:size(data, 1)) /
   size(data, 1)
