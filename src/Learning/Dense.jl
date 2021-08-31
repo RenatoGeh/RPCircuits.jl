@@ -55,8 +55,8 @@ function sample_regiongraph(Sc::AbstractVector{<:Integer}, C::Int, D::Int, R::In
 end
 
 function compile_regiongraph(data::AbstractMatrix{<:Real}, Sc::AbstractVector{<:Integer},
-    root::RootRegion, C::Int, D::Int, R::Int, S::Int, I::Int; offset::Integer = 0,
-    binary::Bool = true, V::Function = x -> x, pseudocount::Int = 1)::Circuit
+    root::RootRegion, C::Int, D::Int, R::Int, S::Int, I::Int; binary::Bool = true,
+    V::Function = x -> x, pseudocount::Int = 1)::Circuit
   n_prods_sums = S*S
   n_prods_leaves = I*I
   node_id = offset + C
@@ -67,9 +67,9 @@ function compile_regiongraph(data::AbstractMatrix{<:Real}, Sc::AbstractVector{<:
   else
     μ = mean(data; dims = 1)
     σ = std(data; dims = 1)
-    leaves = [Gaussian(V(Sc[i]), μ[i], σ[i]*σ[i]) for i in 1:length(Sc)]
+    leaves = [(V(Sc[i]), μ[i], σ[i]*σ[i]) for i in 1:length(Sc)]
   end
-  circ = Vector{Node}(undef, C)
+  roots = Vector{Sum}(undef, C)
   for i ∈ 1:C
     circ[i] = Sum(n_prods_sums*R)
     root.sums[i] = circ[i]
@@ -78,11 +78,9 @@ function compile_regiongraph(data::AbstractMatrix{<:Real}, Sc::AbstractVector{<:
     for j ∈ 1:part.n
       p = Product(2)
       part.prods[j] = p
-      push!(circ, p)
-      node_id += 1
       for pa ∈ root.sums
         l = (i-1)*part.n+j
-        pa.children[l] = node_id
+        pa.children[l] = p
         pa.weights[l] = 1.0/(n_prods_sums*R)
       end
     end
@@ -93,64 +91,40 @@ function compile_regiongraph(data::AbstractMatrix{<:Real}, Sc::AbstractVector{<:
   end
   while !isempty(Q)
     Ch, Pa, which = popfirst!(Q)
-    for i ∈ 1:length(Pa.prods)
-      Pa.prods[i].children[which] = node_id + (i % Ch.n) + 1
-    end
     if Ch isa LeafRegion
+      N = Vector{Leaf}(undef, I)
       n = length(Ch.sc)
       if n == 1
         x = first(Ch.sc)
         if binary
-          ⊥, ⊤ = node_id+I+1, node_id+I+2
-          for i ∈ 1:I
-            push!(circ, Sum([⊥, ⊤], [1-θ[x], θ[x]]))
-            node_id += 1
-          end
-          append!(circ, (neg_leaves[x], pos_leaves[x]))
-          node_id += 2
+          ⊥, ⊤ = neg_leaves[x], pos_leaves[x]
+          for i ∈ 1:I N[i] = Sum([⊥, ⊤], [1-θ[x], θ[x]]) end
         else
-          for i ∈ 1:I
-            push!(circ, leaves[x])
-            node_id += 1
-          end
+          for i ∈ 1:I N[i] = Gaussian(leaves[x]...) end
         end
       else
-        inputs = [Product(n) for i ∈ 1:I]
-        append!(circ, inputs)
-        node_id += I
-        for p ∈ inputs
+        for i ∈ 1:I N[i] = Product(n) end
+        for p ∈ N
           for (i, x) ∈ enumerate(Ch.sc)
-            node_id += 1
-            if binary
-              p.children[i] = node_id
-              append!(circ, (Sum([node_id+1, node_id+2], [1-θ[x], θ[x]]), neg_leaves[x], pos_leaves[x]))
-              node_id += 2
-            else
-              p.children[i] = node_id
-              push!(circ, leaves[x])
-            end
+            if binary p.children[i] = Sum([neg_leaves[x], pos_leaves[x]], [1-θ[x], θ[x]])
+            else p.children[i] = Gaussian(leaves[x]...) end
           end
         end
       end
     else # SumRegion
+      N = Vector{Sum}(undef, S)
       m = Ch.ch.n
-      s_ch = Vector{UInt}(undef, m)
-      s_w = Vector{Float64}(undef, m)
-      for i ∈ 1:m
-        Ch.ch.prods[i] = Product(2)
-        s_ch[i] = node_id+S+i
-        s_w[i] = 1.0/m
-      end
+      Ch.ch.prods = [Product(2) for i ∈ 1:m]
       for i ∈ 1:S
-        Ch.sums[i] = Sum(s_ch, s_w)
-        push!(circ, Ch.sums[i])
+        s = Sum(Ch.ch.prods, [1.0/m for i ∈ 1:m])
+        N[i] = s
+        Ch.sums[i] = s
       end
-      append!(circ, Ch.ch.prods)
-      node_id += S+m
       append!(Q, ((Ch.ch.ch[1], Ch.ch, 1), (Ch.ch.ch[2], Ch.ch, 2)))
     end
+    for i ∈ 1:length(Pa.prods) Pa.prods[i].children[which] = N[((i-1) % Ch.n) + 1] end
   end
-  return circ
+  return roots
 end
 
 """
@@ -166,7 +140,7 @@ See "Random Sum-Product Networks: A Simple and Effective Approach to Probabilist
 """
 @inline function sample_dense(data::AbstractMatrix{<:Real}, Sc::AbstractVector{<:Integer}, C::Int,
     D::Int, R::Int, S::Int, I::Int; offset::Int = 0, binary::Bool = true, V::Function = x -> x,
-    pseudocount::Int = 1)::Circuit
+    pseudocount::Int = 1)::Vector{Sum}
   return compile_regiongraph(data, Sc, sample_regiongraph(Sc, C, D, R, S, I), C, D, R, S, I;
                              offset, binary, V, pseudocount)
 end
