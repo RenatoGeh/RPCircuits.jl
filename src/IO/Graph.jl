@@ -17,7 +17,7 @@ function Base.show(io::IO, n::Product)
   end
 end
 
-Base.show(io::IO, p::Projection) =print(io, "⟂ $(p.pos) $(p.λ) $(p.neg) $(1-p.λ)")
+Base.show(io::IO, p::Projection) = print(io, "⟂ $(p.pos) $(p.λ) $(p.neg) $(1-p.λ)")
 
 function Base.show(io::IO, n::Indicator)
   return print(io, "indicator $(n.scope) $(n.value)")
@@ -35,11 +35,12 @@ function Base.show(io::IO, n::Gaussian)
 end
 
 """
-summary(io::IO, circ::Circuit)
+    summary(io::IO, circ::Circuit)
 
-Print out information about the network `circ` to stream `io`
+Print out information about the network rooted at `r` to stream `io`
 """
-function Base.summary(io::IO, circ::Circuit)
+function Base.summary(io::IO, r::Node)
+  circ = nodes(r)
   len = length(circ)
   lensum, lenprod, lenproj, lenleaves = 0, 0, 0, 0
   for i ∈ 1:len
@@ -85,27 +86,27 @@ end
 # end
 
 """
-    show(io::IO, circ::Circuit)
+    show(io::IO, r::Node)
 
-Print the nodes of the network `circ` to stream `io`
+Print the nodes of the network rooted at `r` to stream `io`
 """
-function Base.show(io::IO, circ::Circuit)
-  println(io, "Circuit(IOBuffer(\"\"\"# ", summary(circ))
-  for (i, node) in enumerate(circ)
-    println(io, i, " ", node)
-  end
-  return print(io, "\"\"\"))")
+function Base.show(io::IO, r::Node)
+  println(io, "Circuit(IOBuffer(\"\"\"# ", summary(r))
+  foreach((i, n) -> println(io, i, " ", n), r)
+  print(io, "\"\"\"))")
   # print(io, summary(circ))
+  return nothing
 end
 
-function Base.show(io::IO, ::MIME"text/plain", circ::Circuit)
+function Base.show(io::IO, ::MIME"text/plain", r::Node)
   # recur_io = IOContext(io)
+  circ = nodes(r)
   recur_io = IOContext(io, :SHOWN_SET => circ)
   limit::Bool = get(io, :limit, false)
   if !haskey(io, :compact)
     recur_io = IOContext(recur_io, :compact => true)
   end
-  summary(io, circ)
+  summary(io, r)
   print(io, ":")
   # print(io, "\n  1: ", circ[1])
   # println(io, "Circuit with:")
@@ -162,12 +163,12 @@ function Base.show(io::IO, ::MIME"text/plain", circ::Circuit)
 end
 
 """
-    Circuit(filename::AbstractString; offset=0)::Circuit
-    Circuit(io::IO=stdin; offset=0)::Circuit
+    Circuit(filename::AbstractString; offset=0)::Node
+    Circuit(io::IO=stdin; offset=0)::Node
 
 Reads network from file. Assume 1-based indexing for node ids and values at indicator nodes. Set offset = 1 if these values are 0-based instead. If `ind_offset = 1`, subtract by one values for indicators.
 """
-function Circuit(filename::String; offset::Integer = 0, ind_offset::Integer = 0)
+function Circuit(filename::String; offset::Integer = 0, ind_offset::Integer = 0)::Node
   circ = open(filename) do file
     return circ = Circuit(file; offset, ind_offset)
   end
@@ -176,7 +177,9 @@ end
 
 function Circuit(io::IO = stdin; offset::Integer = 0, ind_offset::Integer = 0)
   # create dictionary of node_id => node (so they can be read in any order)
-  nodes = Dict{UInt, Node}()
+  nodes = Dict{Int, Node}()
+  edges = Dict{Int, Vector{Int}}()
+  root = 2
   # read and create nodes
   for line in eachline(io)
     # remove line break
@@ -195,13 +198,18 @@ function Circuit(io::IO = stdin; offset::Integer = 0, ind_offset::Integer = 0)
         nodeid = parse(Int, fields[2]) + offset
         nodetype = fields[1][1]
       end
+      (nodeid < root) && (root = nodeid)
       if nodetype == '+'
-        node = Sum(
-          [parse(Int, ch) + offset for ch in fields[3:2:end]],
-          [parse(Float64, w) for w in fields[4:2:end]],
-        )
+        ch = [parse(Int, ch) + offset for ch in fields[3:2:end]]
+        w = [parse(Float64, w) for w in fields[4:2:end]]
+        n = length(ch)
+        edges[nodeid] = ch
+        node = Sum(Vector{Node}(undef, n), w)
       elseif nodetype == '*'
-        node = Product([parse(Int, id) + offset for id in fields[3:end]])
+        ch = [parse(Int, id) + offset for id in fields[3:end]]
+        n = length(ch)
+        node = Product(n)
+        edges[nodeid] = ch
       elseif nodetype == 'c'
         varid = parse(Int, fields[3]) + offset
         node = Categorical(varid, [parse(Float64, value) for value in fields[4:end]])
@@ -219,35 +227,33 @@ function Circuit(io::IO = stdin; offset::Integer = 0, ind_offset::Integer = 0)
       nodes[nodeid] = node
     end
   end
-  nodelist = Vector{Node}(undef, length(nodes))
-  for (id, node) in nodes
-    nodelist[id] = node
+  for (i, E) ∈ edges
+    pa = nodes[i]
+    for (j, e) ∈ enumerate(E) pa.children[j] = nodes[e] end
   end
-  circ = Circuit(nodelist)
-  sort!(circ) # ensure nodes are topologically sorted (with ties broken by bfs-order)
-  return circ
+  return nodes[root]
 end
 
 """
-    save(circ,filename,[offset=0])
+    save(r::Node, filename::String, [offset=0])
 
-Writes network circ to file. Offset adds constant to node instances (useful for translating to 0 starting indexes).
+Writes network rooted at `r` to file. Offset adds constant to node instances (useful for translating to 0 starting indexes).
 """
-function save(circ::Circuit, filename::String, offset = 0)
+function save(r::Node, filename::String, offset = 0)
+  circ = nodes(r)
   open(filename, "w") do io
-    for i in 1:length(circ)
-      println(io, "$i $(circ[i])")
-    end
+    for i in 1:length(circ) println(io, "$i $(circ[i])") end
   end
 end
 export save
 
 """
-    todot(io, son)
+    todot(io::IO, r::Node)
 
 Prints out network structure in graphviz format
 """
-function todot(io::IO, circ::Circuit)
+function todot(io::IO, r::Node)
+  circ = nodes(r)
   println(io, "digraph S {")
   for i in 1:length(circ)
     if isa(circ[i], Sum)
