@@ -10,12 +10,10 @@ abstract type Inner <: Node end
 Sum node data type
 """
 mutable struct Sum <: Inner
-  children::Vector{UInt}
+  children::Vector{Node}
   weights::Vector{Float64}
-  # Sum() = new(Vector{UInt}(),Vector{Float64}())
-  # Sum(children::Vector{<:Integer},weights::Vector{Float64}) = new(children,weights)
-  Sum(ch::Vector{<:Integer}, w::Vector{Float64}) = new(ch, w)
-  Sum(n::Int) = new(Vector{UInt}(undef, n), Vector{Float64}(undef, n))
+  Sum(ch::Vector{<:Node}, w::Vector{Float64}) = new(ch, w)
+  Sum(n::Int) = new(Vector{Node}(undef, n), Vector{Float64}(undef, n))
 end
 export Sum
 
@@ -23,12 +21,9 @@ export Sum
 Product node data type
 """
 struct Product <: Inner
-  children::Vector{UInt}
-  #Product() = new(Vector{UInt}())
-  #Product(children::Vector{<:Integer}) = new(children)
-  #Product(children) = new(children)
-  Product(ch::Vector{<:Integer}) = new(ch)
-  Product(n::Int) = new(Vector{UInt}(undef, n))
+  children::Vector{Node}
+  Product(ch::Vector{<:Node}) = new(ch)
+  Product(n::Int) = new(Vector{Node}(undef, n))
 end
 export Product
 
@@ -54,6 +49,8 @@ function (n::Indicator)(x::AbstractVector{<:Real})::Float64
   return isnan(x[n.scope]) ? 1.0 : n.value ≈ x[n.scope] ? 1.0 : 0.0
 end
 
+@inline Base.copy(i::Indicator)::Indicator = Indicator(i.scope, i.value)
+
 """
 Projection Node.
 """
@@ -77,6 +74,8 @@ function (n::Categorical)(x::AbstractVector{<:Real})::Float64
   return isnan(x[n.scope]) ? 1.0 : n.values[Int(x[n.scope])]
 end
 
+@inline Base.copy(c::Categorical)::Categorical = Categorical(c.scope, c.values)
+
 struct Bernoulli <: Leaf
   scope::UInt
   p::Float64
@@ -86,6 +85,8 @@ export Bernoulli
 function (n::Bernoulli)(x::AbstractVector{<:Real})::Float64
   return isnan(x[n.scope]) ? 1.0 : Int(x[n.scope]) == 1 ? n.p : 1-n.p
 end
+
+@inline Base.copy(b::Bernoulli)::Bernoulli = Bernoulli(b.scope, b.p)
 
 """
 Univariate Gaussian Distribution Node
@@ -101,6 +102,8 @@ function (n::Gaussian)(x::AbstractVector{<:Real})::Float64
   return isnan(x[n.scope]) ? 1.0 :
          exp(-(x[n.scope] - n.mean)^2 / (2 * n.variance)) / sqrt(2 * π * n.variance)
 end
+
+@inline Base.copy(g::Gaussian)::Gaussian = Gaussian(g.scope, g.mean, g.variance)
 
 """
 Is this an inner node?

@@ -3,187 +3,139 @@ using DataFrames
 const Data = Union{AbstractMatrix{<:Real}, AbstractDataFrame}
 const Example = Union{AbstractVector{<:Real}, DataFrameRow}
 
-const Circuit = AbstractVector{<:Node}
-export Circuit
-
 """
-Implements a Circuit.
+layers(r::Node)::Vector{Vector{Node}}
 
-Assumes nodes are numbered topologically so that `nodes[1]` is the root (output) of the circuit and
-nodes[end] is a leaf.
-
-# Arguments
-
-  - `nodes`: vector of nodes sorted in topological order (use `sort!(c)` after creating the circuit
-    if this is not the case).
-
-# Examples
-
-```@example
-c = Circuit([
-  Sum([2, 3, 4], [0.2, 0.5, 0.3]),
-  Product([5, 7]),
-  Product([5, 8]),
-  Product([6, 8]),
-  Categorical(1, [0.6, 0.4]),
-  Categorical(1, [0.1, 0.9]),
-  Categorical(2, [0.3, 0.7]),
-  Categorical(2, [0.8, 0.2]),
-])
-```
+Returns list of node layers. Each node in a layer is a function of nodes in previous layers. This allows parallelization when computing with the circuit.
 """
-@inline Circuit(N::AbstractVector{<:Node}; as_ref::Bool = false)::Circuit = as_ref ? N : copy(N)
-
-"""
-sort!(c::Circuit)
-
-Sort nodes in topological order (with ties broken by breadth-first order) and modify node ids
-accordingly.
-
-Returns the permutation applied.
-"""
-function Base.sort!(c::Circuit)
-  # First compute the number of parents for each node
-  pa = zeros(length(c))
-  for (i, n) in enumerate(c)
-    if !isleaf(n)
-      @inbounds for j in n.children
-        pa[j] += 1
-      end
-    end
-  end
-  @assert count(isequal(0), pa) == 1 "Circuit has more than one parentless node"
-  root = findfirst(isequal(0), pa) # root is the single parentless node
-  # Kanh's algorithm: collect node ids in topological BFS order
-  open = Vector{Int}()
-  # visited = Set{Int}()
-  closed = Vector{Int}() # topo bfs order
-  push!(open, root) # enqueue root node
-  while !isempty(open)
-    n = popfirst!(open) # dequeue node
-    # push!(visited, n)
-    push!(closed, n)
-    if !isleaf(c[n])
-      # append!(open, ch for ch in c[n].children if !in(ch, visited) && !in(ch, open))
-      @inbounds for j in c[n].children
-        pa[j] -= 1
-        if pa[j] == 0
-          push!(open, j)
+function layers(r::Node)::Vector{Vector{Node}}
+  L = Vector{Vector{Node}}()
+  Q = Tuple{Node, Int}[(r, 1)]
+  V = Set{Node}(r)
+  while !isempty(Q)
+    u, l = popfirst!(Q)
+    if length(L) < l push!(L, Node[u])
+    else push!(L[l], u) end
+    if isinner(u)
+      nl = l + 1
+      for c ∈ u.children
+        if c ∉ V
+          push!(Q, (c, nl))
+          push!(V, c)
         end
       end
     end
   end
-  @assert length(closed) == length(c)
-  inverse = similar(closed) # inverse mapping
-  @inbounds for i in 1:length(closed)
-    inverse[closed[i]] = i
-  end
-  # permute nodes according to closed
-  permute!(c, closed) # is this faster than c .= c[closed]?
-  # now fix ids of children
-  @inbounds for i in 1:length(c)
-    if !isleaf(c[i])
-      for (j, ch) in enumerate(c[i].children)
-        c[i].children[j] = inverse[ch]
-      end
-    end
-  end
-  return closed
-end
-
-"""
-layers(c::Circuit)
-
-Returns list of node layers. Each node in a layer is a function of nodes in previous layers. This allows parallelization when computing with the circuit.
-Assume nodes are topologically sorted (e.g. by calling `sort!(c)`).
-"""
-function layers(c::Circuit)
-  layer = zeros(length(c)) # will contain the layer of each node
-  layer[1] = 1 # root node is first layer
-  for i in 1:length(c)
-    # travesrse nodes in topological order
-    if !isleaf(c[i])
-      @inbounds for j in c[i].children
-        # child j cannot be in same layer as i, for all i < j
-        layer[j] = max(layer[j], layer[i] + 1)
-      end
-    end
-  end
-  # get number of layers
-  nlayers = maximum(layer)
-  # obtain layers (this is quadratic runtime -- can probably be improved to n log n)
-  thelayers = Vector()
-  @inbounds for l in 1:nlayers
-    # collect all nodes in layer l
-    thislayer = filter(i -> (layer[i] == l), 1:length(c))
-    push!(thelayers, thislayer)
-  end
-  return thelayers
+  return L
 end
 export layers
 
 """
-    nodes(c::Circuit)
+    nodes(r::Node; f::Union{Nothing, Function} = nothing)::Vector{Node}
 
-Collects the list of nodes in `c`.
+Collects the list of nodes in `r`, traversing graph in topological order and storing nodes that
+return `true` when function `f` is applied to them. If no function is given, stores every node.
 """
-@inline nodes(c::Circuit) = c
+function nodes(r::Node; f::Union{Nothing, Function} = nothing)::Vector{Node}
+  N = Node[r]
+  V = Set{Node}()
+  Q = Node[r]
+  while !isempty(Q)
+    u = popfirst!(Q)
+    if isleaf(u) continue end
+    for c ∈ u.children
+      if c ∉ V
+        if isnothing(f) || f(c) push!(N, c) end
+        push!(V, c)
+      end
+    end
+  end
+  return N
+end
 export nodes
+
+function Base.foreach(f::Function, r::Node)
+  N = Node[r]
+  V = Set{Node}()
+  Q = Node[r]
+  i = 0
+  while !isempty(Q)
+    u = popfirst!(Q)
+    f(i, u)
+    i += 1
+    if isleaf(u) continue end
+    for c ∈ u.children
+      if c ∉ V
+        push!(N, c)
+        push!(V, c)
+      end
+    end
+  end
+  return nothing
+end
 
 """
 Select nodes by topology
 """
-@inline leaves(c::Circuit) = filter(n -> isa(n, Leaf), c)
-@inline sums(c::Circuit) = filter(n -> isa(n, Sum), c)
-@inline products(c::Circuit) = filter(n -> isa(n, Product), c)
-@inline projections(c::Circuit) = filter(n -> isa(n, Projection), c)
-@inline root(c::Circuit) = @inbounds c[1]
+@Inline leaves(r::Node) = nodes(r; f = n -> isa(n, Leaf))
+@inline sums(r::Node) = nodes(r; f = n -> isa(n, Sum))
+@inline products(r::Node) = nodes(r; f = n -> isa(n, Product))
+@inline projections(r::Node) = nodes(r; f = n -> isa(n, Projections))
+@inline root(r::Node) = r
+
 #TODO #variables(c::Circuit) = collect(1:c._numvars)
-@inline children(c::Circuit, n) = @inbounds c[n].children
+@inline children(r::Inner) = r.children
 export leaves, sums, products, root, projections
 
 """
 Return vector of weights associate to outgoing edges of (sum) node n.
 """
-@inline weights(c::Circuit, n) = @inbounds c[n].weights
+@inline weights(r::Sum) = c.weights
 export weights
 
 """
-    nparams(c::Circuit)
+    nparams(r::Node)
 
-Computes the number of parameters in the circuit `c`.
+Computes the number of parameters in the circuit rooted at `r`.
 """
-function nparams(c::Circuit)
-  numparams = 0
-  for i in 1:length(c)
-    if issum(c[i])
-      numparams += length(children(c, i))
-    elseif isa(c[i], Categorical)
-      numparams += length(c[i].values)
-    elseif isa(c[i], Gaussian)
-      numparams += 2
+function nparams(r::Node)::Int
+  n = 0
+  Q = Node[r]
+  V = Set{Node}()
+  while !isempty(Q)
+    u = popfirst!(Q)
+    if issum(u) n += length(u.weights)
+    elseif isa(u, Categorical) n += length(u.values)
+    elseif isa(u, Gaussian) n += 2 end
+    if isleaf(u) continue end
+    for c ∈ u.children
+      if c ∉ V
+        push!(Q, c)
+        push!(V, c)
+      end
     end
   end
-  return numparams
+  return n
 end
 export nparams
 
 """
-    vardims(c::Circuit)
+    vardims(c::Node)
 
 Returns a dictionary mapping each variable index to its dimension (no. of values).
 Assigns dimension = -1 for continuous variables.
 """
-function vardims(c::Circuit)
+function vardims(r::Node)::Dict{Int, Int}
+  N = leaves(r)
   vdims = Dict{Int, Int}()
-  for node in leaves(c)
-    if isa(node, Indicator)
-      dim = get(vdims, node.scope, 0)
-      vdims[node.scope] = max(dim, convert(Int, node.value))
-    elseif isa(node, Categorical)
-      vdims[node.scope] = length(node.values)
-    elseif isa(node, Gaussian)
-      vdims[node.scope] = -1
+  for n ∈ N
+    if isa(n, Indicator)
+      dim = get(vdims, n.scope, 0)
+      vdims[n.scope] = max(dim, convert(Int, n.value))
+    elseif isa(n, Categorical)
+      vdims[n.scope] = length(n.values)
+    elseif isa(n, Gaussian)
+      vdims[n.scope] = -1
     end
   end
   return vdims
@@ -191,28 +143,31 @@ end
 export vardims
 
 """
-    scope(c)
+    scope(r::Node)::BitSet
 
-Returns the scope of circuit `c`, given by the scope of its root node.
+Returns the scope of circuit rooted at `r`, given by the scope of its root node.
 """
-scope(c::Circuit)::AbstractVector = unique(collect(map(n -> scope(n), leaves(c))))
+scope(r::Node)::BitSet = union!(BitSet(), scope.(leaves(r))...)
 export scope
 
 """
-    scopes(c::Circuit)
+    scopes(r::Node)
 
-Returns an array of scopes for every node in the `c` (ordered by their index).
+Returns a dictionary of scopes for every node in the circuit rooted at `r`.
 """
-function scopes(c::Circuit)
-  sclist = Array{Array{Int}}(undef, length(c))
+function scopes(r::Node)::Dict{Node, BitSet}
+  sclist = Dict{Node, BitSet}()
+  N = nodes(r)
   for i in length(c):-1:1
-    node = c[i]
+    node = N[i]
     if isleaf(node)
-      sclist[i] = Int[node.scope]
+      sclist[node] = BitSet(node.scope)
     elseif issum(node) # assume completeness
-      sclist[i] = copy(sclist[node.children[1]])
-    else # can probably be done more efficiently
-      sclist[i] = Base.reduce(union, map(j -> sclist[j], node.children))
+      sclist[node] = copy(sclist[node.children[1]])
+    else
+      sc = BitSet()
+      for c ∈ node.children union!(sc, sclist[c]) end
+      sclist[node] = sc
     end
   end
   return sclist
@@ -228,6 +183,7 @@ The projected circuit assigns the same values to configurations that agree on ev
 The scope of the generated circuit contains query and evidence variables, but not marginalized variables.
 """
 function project(c::Circuit, query::AbstractSet, evidence::AbstractVector)
+  # TODO: refactor away from Circuit
   nodes = Dict{UInt, Node}()
   # evaluate circuit to collect node values
   vals = Array{Float64}(undef, length(c))
@@ -399,47 +355,10 @@ function project2(c::Circuit, query::AbstractSet, evidence::AbstractVector)
 end
 
 """
-    subcircuit(c::Circuit, node)
-
-Returns the subcircuit of `c` rooted at given `node`.
-"""
-function subcircuit(c::Circuit, node::Integer)
-  # Collect nodes in subcircuit
-  nodes = Dict{UInt, Node}()
-  stack = UInt[node]
-  while !isempty(stack)
-    n = pop!(stack)
-    node = c[n]
-    nodes[n] = deepcopy(node)
-    if !isleaf(node)
-      append!(stack, node.children)
-    end
-  end
-  # println(nodes)
-  # Reassign indices so that the become contiguous
-  # Sorted list of remaining node ids -- position in list gives new index
-  nodeid = Base.sort!(collect(keys(nodes)))
-  idmap = Dict{UInt, UInt}()
-  for (newid, oldid) in enumerate(nodeid)
-    idmap[oldid] = newid
-  end
-  # println(idmap)
-  # Now remap ids of children nodes
-  for node in values(nodes)
-    if !isleaf(node)
-      for (i, ch) in enumerate(node.children)
-        node.children[i] = idmap[ch]
-      end
-    end
-  end
-  return c = Circuit([nodes[i] for i in nodeid])
-end
-export subcircuit
-
-"""
 Modifies circuit so that each node has at most two children. Assume circuit is normalized.
 """
 function binarize!(c::Circuit)
+  # TODO: refactor away from Circuit
   stack = UInt[1]
   newid = length(c) + 1
   while !isempty(stack)
@@ -474,29 +393,24 @@ function binarize!(c::Circuit)
 end
 export binarize!
 
-function scope_dict(C::Circuit)::Dict{UInt, BitSet}
-  φ = Dict{UInt, BitSet}()
-  for (i, n) ∈ Iterators.reverse(enumerate(C))
-    j = UInt(i)
-    if haskey(φ, j) continue end
-    φ[j] = isleaf(n) ? BitSet(scope(n)) : reduce(∪, getindex.(Ref(φ), n.children))
-  end
-  return φ
-end
-
 """
 Verifies smoothness.
 """
-function issmooth(C::Circuit; φ::Dict{UInt, BitSet} = Dict{UInt, BitSet}())::Bool
+function issmooth(r::Node; φ::Dict{Node, BitSet} = Dict{Node, BitSet}())::Bool
   assign = isempty(φ)
-  for (i, n) ∈ Iterators.reverse(enumerate(C))
-    j = UInt(i)
-    if assign && haskey(φ, j) continue end
-    if assign && isleaf(n) φ[j] = BitSet(scope(n))
+  N = nodes(r)
+  for n ∈ Iterators.reverse(N)
+    if assign && haskey(φ, n) continue end
+    if assign && isleaf(n) φ[n] = BitSet(n.scope)
     elseif !isleaf(n)
       ch = getindex.(Ref(φ), n.children)
-      if issum(n) && !allequal(ch) return false end
-      assign && (φ[j] = reduce(∪, ch))
+      if issum(n)
+        Sc = first(ch)
+        for i ∈ 2:length(ch)
+          if ch[i] != S return false end
+        end
+        φ[n] = S
+      else assign && (φ[n] = reduce(∪, ch)) end
     end
   end
   return true
@@ -506,21 +420,21 @@ export issmooth
 """
 Verifies decomposability.
 """
-function isdecomposable(C::Circuit; φ::Dict{UInt, BitSet} = Dict{UInt, BitSet}())::Bool
+function isdecomposable(r::Node; φ::Dict{Node, BitSet} = Dict{Node, BitSet}())::Bool
   assign = isempty(φ)
-  for (i, n) ∈ Iterators.reverse(enumerate(C))
-    j = UInt(i)
-    if assign && haskey(φ, j) continue end
-    if assign && isleaf(n)
-      φ[j] = BitSet(scope(n))
+  N = nodes(r)
+  for n ∈ Iterators.reverse(N)
+    if assign && haskey(φ, n) continue end
+    if assign && isleaf(n) φ[n] = BitSet(n.scope)
     elseif !isleaf(n)
       ch = getindex.(Ref(φ), n.children)
       if isprod(n)
-        Sc = BitSet(first(ch))
+        Sc = first(ch)
         for i ∈ 2:length(ch)
           if !isempty(ch[i] ∩ Sc) return false end
           union!(Sc, ch[i])
         end
+        φ[j] = Sc
       end
       assign && (φ[j] = reduce(∪, ch))
     end
@@ -533,7 +447,28 @@ export isdecomposable
 Verifies validity.
 """
 function Base.isvalid(C::Circuit)::Bool
-  φ = scope_dict(C)
-  return issmooth(C; φ = φ) && isdecomposable(C; φ = φ)
+  φ = scope(C)
+  N = nodes(r)
+  for n ∈ Iterators.reverse(N)
+    if haskey(φ, n) continue end
+    if isleaf(n) φ[n] = BitSet(n.scope)
+    elseif !isleaf(n)
+      ch = getindex.(Ref(φ), n.children)
+      Sc = first(ch)
+      if issum(n)
+        for i ∈ 2:length(ch)
+          if ch[i] != S return false end
+        end
+        φ[n] = S
+      else
+        for i ∈ 2:length(ch)
+          if !isempty(ch[i] ∩ Sc) return false end
+          union!(Sc, ch[i])
+        end
+        φ[j] = Sc
+      end
+    end
+  end
+  return true
 end
 export isvalid
