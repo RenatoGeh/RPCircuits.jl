@@ -6,7 +6,6 @@ function learn_structured(S::Matrix{<:Real}; n_projs::Int = 3, max_height::Int =
     vtree::Union{Vtree, Nothing} = nothing, residuals::Bool = false, n_comps::Int = 0, p_res::Real = 0.25)::Circuit
   m = size(S, 1)
   if max_height < 0 max_height = floor(Int, sqrt(m)) end
-  C = Vector{Node}()
   D = DataFrame(S, :auto)
   Sc = propertynames(D)
   rule = t_proj == :max ? (x -> max_rule(x, r, trials)) : (x -> sid_rule(x, c, trials))
@@ -15,19 +14,15 @@ function learn_structured(S::Matrix{<:Real}; n_projs::Int = 3, max_height::Int =
     else K = Dict{BitSet, Vector{Sum}}() end
   else K = nothing end
   if n_comps > 1
-    M = Sum(n_comps)
-    M.weights .= fill(1.0/n_comps, n_comps)
-    push!(C, M)
-    k = 2
+    root = Sum(n_comps)
+    root.weights .= fill(1.0/n_comps, n_comps)
     for i ∈ 1:n_comps
-      learn_mix_structured(C, D, Sc, n_projs, rule, max_height, min_examples, binarize,
-                           dense_leaves, vtree, split_t; save_layers = K)
-      M.children[i] = k
-      k = length(C)+1
+      M.children[i] = learn_mix_structured(C, D, Sc, n_projs, rule, max_height, min_examples,
+                                           binarize, dense_leaves, vtree, split_t; save_layers = K)
     end
   else
-    learn_mix_structured(C, D, Sc, n_projs, rule, max_height, min_examples, binarize, dense_leaves,
-                         vtree, split_t; save_layers = K)
+    root = learn_mix_structured(C, D, Sc, n_projs, rule, max_height, min_examples, binarize,
+                                dense_leaves, vtree, split_t; save_layers = K)
   end
   if residuals
     for v ∈ values(K)
@@ -42,7 +37,7 @@ function learn_structured(S::Matrix{<:Real}; n_projs::Int = 3, max_height::Int =
       end
     end
   end
-  return Circuit(C; as_ref = true)
+  return root
 end
 export learn_structured
 
@@ -74,23 +69,19 @@ function partition_by(R::Union{Function, Nothing},
   return λ/m, I, J, same_I, same_J
 end
 
-function factorize_sub(binarize::Bool, M::AbstractMatrix{<:Real}, I::Vector{Int}, Z::Vector{Symbol},
-    V::Dict{Union{Symbol, Int}, Union{Int, Symbol}}, C::Vector{Node}, n_count::Int, P::Product)::Int
+function factorize_sub(binarize::Bool, M::AbstractMatrix{<:Real}, I::Vector{Int},
+    Z::Vector{Symbol}, V::Dict{Union{Symbol, Int}, Union{Int, Symbol}};
+    ⊥::Union{Vector{Indicator}, Nothing} = nothing, ⊤::Union{Vector{Indicator}, Nothing} = nothing)::Product
   n = size(M, 2)
   if binarize θ = vec(sum(M; dims = 1)) / length(I)
   else μ, σ = mean(M; dims = 1), std(M; dims = 1) end
+  P = Product(n)
   for j ∈ 1:n
-    n_count += 1
-    P.children[j] = n_count
     v = V[Z[j]]
-    if binarize
-      ⊥, ⊤ = Indicator(v, 0), Indicator(v, 1)
-      B = Sum([n_count+1, n_count+2], [1-θ[j], θ[j]])
-      append!(C, (B, ⊥, ⊤))
-      n_count += 2
-    else push!(C, Gaussian(v, μ[j], isnan(σ[j]) || σ[j] == 0 ? 0.05 : σ[j]*σ[j])) end
+    if binarize P.children[j] = Sum([⊥[v], ⊤[v]], [1-θ[j], θ[j]])
+    else P.children[j] = Gaussian(v, μ[j], isnan(σ[j]) || σ[j] == 0 ? 0.05 : σ[j]*σ[j]) end
   end
-  return n_count
+  return P
 end
 
 function random_split(D::AbstractDataFrame, Sc::Vector{Symbol}, M::AbstractMatrix{<:Real};
@@ -139,10 +130,10 @@ function vtree_split(D::AbstractDataFrame, Sc::Vector{Symbol}, M::AbstractMatrix
 end
 
 function factorize_random_split(S::AbstractDataFrame, Z::Vector{Symbol}, M::AbstractMatrix{<:Real},
-    n_count::Int, binarize::Bool, C::Vector{Node}, pa::Product, n_projs::Int,
-    V::Dict{Union{Symbol, Int}, Union{Int, Symbol}},
+    binarize::Bool, n_projs::Int, V::Dict{Union{Symbol, Int}, Union{Int, Symbol}},
     Q::Vector{Tuple{AbstractDataFrame, AbstractMatrix{<:Real}, Vector{Symbol}, Sum, Union{Nothing, Vtree}, Int}},
-    split_t::Symbol, rule::Function, n_height::Int; vtree::Union{Nothing, Vtree} = nothing)::Int
+    split_t::Symbol, rule::Function, n_height::Int; vtree::Union{Nothing, Vtree} = nothing,
+    ⊥::Union{Vector{Indicator}, Nothing} = nothing, ⊤::Union{Vector{Indicator}, Nothing} = nothing)::Product
   if split_t == :random
     S_1, A_1, Z_1, S_2, A_2, Z_2 = random_split(S, Z, M)
   elseif split_t == :vtree
@@ -152,57 +143,47 @@ function factorize_random_split(S::AbstractDataFrame, Z::Vector{Symbol}, M::Abst
     @assert !isnothing(rule)
     S_1, A_1, Z_1, S_2, A_2, Z_2 = projection_split(S, Z, M, rule)
   end
-  n_count += 1
-  pa.children[1] = n_count
+  pa = Product(2)
   if length(Z_1) == 1
     v = V[first(Z_1)]
     if binarize
       θ = mean(A_1)
-      ⊥, ⊤ = Indicator(v, 0), Indicator(v, 1)
-      B = Sum([n_count+1, n_count+2], [1-θ, θ])
-      append!(C, (B, ⊥, ⊤))
-      n_count += 2
+      c = Sum([⊥[v], ⊤[v]], [1-θ, θ])
     else
       μ, σ = mean(A_1), std(A_1)
-      push!(C, Gaussian(v, μ, isnan(σ) || σ == 0 ? 0.05 : σ*σ))
+      c = Gaussian(v, μ, isnan(σ) || σ == 0 ? 0.05 : σ*σ)
     end
   else
-    s = Sum(n_projs)
-    push!(C, s)
-    push!(Q, (S_1, A_1, Z_1, s, (isnothing(vtree) ? nothing : vtree.left), n_height))
+    c = Sum(n_projs)
+    push!(Q, (S_1, A_1, Z_1, c, (isnothing(vtree) ? nothing : vtree.left), n_height))
   end
-  n_count += 1
-  pa.children[2] = n_count
+  pa.children[1] = c
   if length(Z_2) == 1
     v = V[first(Z_2)]
     if binarize
       θ = mean(A_2)
-      ⊥, ⊤ = Indicator(v, 0), Indicator(v, 1)
-      B = Sum([n_count+1, n_count+2], [1-θ, θ])
-      append!(C, (B, ⊥, ⊤))
-      n_count += 2
+      c = Sum([⊥[v], ⊤[v]], [1-θ, θ])
     else
       μ, σ = mean(A_2), std(A_2)
-      push!(C, Gaussian(v, μ, isnan(σ) || σ == 0 ? 0.05 : σ*σ))
+      c = Gaussian(v, μ, isnan(σ) || σ == 0 ? 0.05 : σ*σ)
     end
   else
-    s = Sum(n_projs)
-    push!(C, s)
-    push!(Q, (S_2, A_2, Z_2, s, (isnothing(vtree) ? nothing : vtree.right), n_height))
+    c = Sum(n_projs)
+    push!(Q, (S_2, A_2, Z_2, c, (isnothing(vtree) ? nothing : vtree.right), n_height))
   end
-  return n_count
+  pa.children[2] = c
+  return pa
 end
 
-function learn_mix_structured(C::Vector{Node}, D::DataFrame, Sc::Vector{Symbol}, n_projs::Int,
-    t_rule::Function, max_height::Int, min_examples::Int, binarize::Bool, dense_leaves::Bool,
-    vtree::Union{Nothing, Vtree}, split_t::Symbol;
-    save_layers::Union{Dict{Vtree, Vector{Sum}}, Dict{BitSet, Vector{Sum}}, Nothing} = nothing)
+function learn_mix_structured(D::DataFrame, Sc::Vector{Symbol}, n_projs::Int, t_rule::Function,
+    max_height::Int, min_examples::Int, binarize::Bool, dense_leaves::Bool, vtree::Union{Nothing, Vtree},
+    split_t::Symbol; save_layers::Union{Dict{Vtree, Vector{Sum}}, Dict{BitSet, Vector{Sum}}, Nothing} = nothing)::Node
   c_weight = 1.0/n_projs
-  push!(C, Sum(n_projs))
+  root = Sum(n_projs)
   Q = Tuple{AbstractDataFrame, AbstractMatrix{<:Real}, Vector{Symbol}, Sum, Union{Nothing, Vtree}, Int}[(view(D, :, :), Matrix(D), Sc, C[length(C)], vtree, 0)]
-  n_count = length(C)
   V = Dict{Union{Symbol, Int}, Union{Int, Symbol}}()
   for (i, x) ∈ enumerate(Sc) V[i], V[x] = x, i end
+  ⊥, ⊤ = binarize ? indicators(1:length(Sc)) : (nothing, nothing)
   while !isempty(Q)
     S, M, Z, Σ, utree, n_height = popfirst!(Q)
     if !isnothing(save_layers)
@@ -225,53 +206,30 @@ function learn_mix_structured(C::Vector{Node}, D::DataFrame, Sc::Vector{Symbol},
       factorize_neg_sub = (n_height > max_height) || (length(J) < min_examples) || same_J
       pos_data, pos_mat = view(S, I, :), view(M, I, :)
       neg_data, neg_mat = view(S, J, :), view(M, J, :)
-      n_count += 1
-      K[i] = n_count
-      P = Sum([0, 0], [λ, 1.0-λ])
-      push!(C, P)
       if dense_leaves
-        P.children[1] = n_count+1
         if factorize_pos_sub
-          dense = sample_dense(pos_mat, collect(1:n), 1, 3, 2, 2, 2; offset = n_count,
-                               binary = binarize, V = x -> V[Z[x]])
-          n_count += length(dense)
-          append!(C, dense)
-          pos = first(dense)
+          pos = sample_dense(pos_mat, collect(1:n), 1, 3, 2, 2, 2; binary = binarize, V = x -> V[Z[x]])
         else
-          pos = Product(2)
-          n_count += 1
-          push!(C, pos)
-          n_count = factorize_random_split(pos_data, Z, pos_mat, n_count, binarize, C, pos, n_projs,
-                                           V, Q, split_t, t_rule, n_height; vtree = utree)
+          pos = factorize_random_split(pos_data, Z, pos_mat, n_count, binarize, C, n_projs, V, Q,
+                                       split_t, t_rule, n_height; vtree = utree)
         end
-        P.children[2] = n_count+1
         if factorize_neg_sub
-          dense = sample_dense(neg_mat, collect(1:n), 1, 3, 2, 2, 2; offset = n_count,
+          neg = sample_dense(neg_mat, collect(1:n), 1, 3, 2, 2, 2; offset = n_count,
                                binary = binarize, V = x -> V[Z[x]])
-          n_count += length(dense)
-          append!(C, dense)
-          neg = first(dense)
         else
-          neg = Product(2)
-          n_count += 1
-          push!(C, neg)
-          n_count = factorize_random_split(neg_data, Z, neg_mat, n_count, binarize, C, neg, n_projs,
-                                           V, Q, split_t, t_rule, n_height; vtree = utree)
+          neg = factorize_random_split(neg_data, Z, neg_mat, n_count, binarize, C, n_projs, V, Q,
+                                       split_t, t_rule, n_height; vtree = utree)
         end
       else
-        P.children[1], P.children[2] = n_count+1, n_count+2
-        pos = factorize_pos_sub ? Product(n) : Product(2)
-        neg = factorize_neg_sub ? Product(n) : Product(2)
-        n_count += 2
-        append!(C, (pos, neg))
-        if factorize_pos_sub n_count = factorize_sub(binarize, pos_mat, I, Z, V, C, n_count, pos)
-        else n_count = factorize_random_split(pos_data, Z, pos_mat, n_count, binarize, C, pos,
-                                              n_projs, V, Q, split_t, t_rule, n_height; vtree = utree) end
-        if factorize_neg_sub n_count = factorize_sub(binarize, neg_mat, J, Z, V, C, n_count, neg)
-        else n_count = factorize_random_split(neg_data, Z, neg_mat, n_count, binarize, C, neg,
-                                              n_projs, V, Q, split_t, t_rule, n_height; vtree = utree) end
+        if factorize_pos_sub pos = factorize_sub!(binarize, pos_mat, I, Z, V, C, n_count; ⊥, ⊤)
+        else pos = factorize_random_split(pos_data, Z, pos_mat, n_count, binarize, C, n_projs, V,
+                                        Q, split_t, t_rule, n_height; vtree = utree) end
+        if factorize_neg_sub neg = factorize_sub(binarize, neg_mat, J, Z, V, C, n_count; ⊥, ⊤)
+        else neg = factorize_random_split(neg_data, Z, neg_mat, n_count, binarize, C, n_projs, V,
+                                        Q, split_t, t_rule, n_height; vtree = utree) end
       end
+      K[i] = Sum([pos, neg], [λ, 1.0-λ])
     end
   end
-  nothing
+  return root
 end

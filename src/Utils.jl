@@ -74,3 +74,12 @@ function allequal(E::AbstractVector)::Bool
   end
   return true
 end
+
+"""
+    indicators(X::Union{AbstractVector{<:Integer}, UnitRange})::Tuple{Vector{Indicator}, Vector{Indicator}}
+
+Returns all ⊤ and ⊥ indicators for each variable in X.
+"""
+function indicators(X::Union{AbstractVector{<:Integer}, UnitRange})::Tuple{Vector{Indicator}, Vector{Indicator}}
+  return [Indicator(i, 0) for i ∈ X], [Indicator(i, 1) for i ∈ X]
+end
