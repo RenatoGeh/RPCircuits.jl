@@ -4,7 +4,7 @@ const Data = Union{AbstractMatrix{<:Real}, AbstractDataFrame}
 const Example = Union{AbstractVector{<:Real}, DataFrameRow}
 
 """
-layers(r::Node)::Vector{Vector{Node}}
+    layers(r::Node)::Vector{Vector{Node}}
 
 Returns list of node layers. Each node in a layer is a function of nodes in previous layers. This allows parallelization when computing with the circuit.
 """
@@ -37,17 +37,15 @@ Collects the list of nodes in `r`, traversing graph in topological order and sto
 return `true` when function `f` is applied to them. If no function is given, stores every node.
 """
 function nodes(r::Node; f::Union{Nothing, Function} = nothing)::Vector{Node}
-  N = Node[r]
+  N = Node[]
   V = Set{Node}()
   Q = Node[r]
   while !isempty(Q)
     u = popfirst!(Q)
+    if isnothing(f) || f(u) push!(N, u) end
     if isleaf(u) continue end
     for c ∈ u.children
-      if c ∉ V
-        if isnothing(f) || f(c) push!(N, c) end
-        push!(V, c)
-      end
+      if c ∉ V push!(V, c); push!(Q, c) end
     end
   end
   return N
@@ -77,10 +75,10 @@ end
 """
 Select nodes by topology
 """
-@Inline leaves(r::Node) = nodes(r; f = n -> isa(n, Leaf))
-@inline sums(r::Node) = nodes(r; f = n -> isa(n, Sum))
-@inline products(r::Node) = nodes(r; f = n -> isa(n, Product))
-@inline projections(r::Node) = nodes(r; f = n -> isa(n, Projections))
+@inline leaves(r::Node) = nodes(r; f = Base.Fix2(isa, Leaf))
+@inline sums(r::Node) = nodes(r; f = n -> Base.Fix2(isa, Sum))
+@inline products(r::Node) = nodes(r; f = n -> Base.Fix2(isa, Product))
+@inline projections(r::Node) = nodes(r; f = n -> Base.Fix2(isa, Projections))
 @inline root(r::Node) = r
 
 #TODO #variables(c::Circuit) = collect(1:c._numvars)
@@ -182,7 +180,7 @@ Marginalized variables are the ones that are not in `query` and are assigned `Na
 The projected circuit assigns the same values to configurations that agree on evidence and marginalized variables w.r.t. to `evidence`.
 The scope of the generated circuit contains query and evidence variables, but not marginalized variables.
 """
-function project(c::Circuit, query::AbstractSet, evidence::AbstractVector)
+function project(r::Node, query::AbstractSet, evidence::AbstractVector)
   # TODO: refactor away from Circuit
   nodes = Dict{UInt, Node}()
   # evaluate circuit to collect node values
@@ -270,7 +268,7 @@ end
 export project
 
 # Alternative implementation that maintains scopes of nodes
-function project2(c::Circuit, query::AbstractSet, evidence::AbstractVector)
+function project2(r::Node, query::AbstractSet, evidence::AbstractVector)
   nodes = Dict{UInt, Node}()
   # evaluate circuit to collect node values
   vals = Array{Float64}(undef, length(c))
@@ -357,7 +355,7 @@ end
 """
 Modifies circuit so that each node has at most two children. Assume circuit is normalized.
 """
-function binarize!(c::Circuit)
+function binarize!(r::Node)
   # TODO: refactor away from Circuit
   stack = UInt[1]
   newid = length(c) + 1
@@ -446,8 +444,8 @@ export isdecomposable
 """
 Verifies validity.
 """
-function Base.isvalid(C::Circuit)::Bool
-  φ = scope(C)
+function Base.isvalid(r::Node)::Bool
+  φ = scope(r)
   N = nodes(r)
   for n ∈ Iterators.reverse(N)
     if haskey(φ, n) continue end
@@ -472,3 +470,19 @@ function Base.isvalid(C::Circuit)::Bool
   return true
 end
 export isvalid
+
+@inline Base.:(*)(w::Float64, n::Node)::Tuple{Float64, Node} = (w, n)
+@inline Base.:(*)(n::Node, w::Float64)::Tuple{Float64, Node} = (w, n)
+@inline function Base.:(+)(Ch::Tuple{Float64, Node}...)::Sum
+  n = length(Ch)
+  s = Sum(n)
+  for i ∈ 1:n
+    w, c = Ch[i]
+    s.weights[i] = w
+    s.children[i] = c
+  end
+  return s
+end
+@inline Base.:(*)(x::Node, y::Node)::Product = Product([x, y])
+@inline function Base.:(*)(p::Node, q::Product)::Product push!(q.children, p); return q end
+@inline Base.:(*)(p::Product, q::Node)::Product = q*p

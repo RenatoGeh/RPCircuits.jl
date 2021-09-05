@@ -12,7 +12,7 @@ Sum node data type
 mutable struct Sum <: Inner
   children::Vector{Node}
   weights::Vector{Float64}
-  Sum(ch::Vector{<:Node}, w::Vector{Float64}) = new(ch, w)
+  Sum(ch::AbstractVector{<:Node}, w::AbstractVector{Float64}) = new(ch, w)
   Sum(n::Int) = new(Vector{Node}(undef, n), Vector{Float64}(undef, n))
 end
 export Sum
@@ -22,7 +22,8 @@ Product node data type
 """
 struct Product <: Inner
   children::Vector{Node}
-  Product(ch::Vector{<:Node}) = new(ch)
+  Product(ch::AbstractVector{<:Node}) = new(ch)
+  Product(ch::Tuple) = new([c for c ∈ ch])
   Product(n::Int) = new(Vector{Node}(undef, n))
 end
 export Product
