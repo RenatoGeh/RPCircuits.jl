@@ -6,39 +6,35 @@ using Random
 abstract type ParameterLearner end
 
 """
-    backpropagate!(diff,circ,values)
+    backpropagate!(diff::Dict{Node, Float64}, r::Node, values::Dict{Node, Float64})
 
 Computes derivatives for values propagated in log domain and stores results in given vector diff.
 """
-function backpropagate!(diff::Vector{Float64}, circ::Circuit, values::Vector{Float64})
+function backpropagate!(diff::Dict{Node, Float64}, r::Node, values::Dict{Node, Float64})
   # Assumes network has been evaluted at some assignment using logpdf!
   # Backpropagate derivatives
-  @assert length(diff) == length(circ) == length(values)
-  fill!(diff, 0.0)
-  @inbounds diff[1] = 1.0
-  for i in 1:length(circ)
-    @inbounds node = circ[i]
-    if issum(node)
-      @inbounds for (k, j) in enumerate(node.children)
-        diff[j] += node.weights[k] * diff[i]
-      end
-    elseif isprod(node)
-      @inbounds for j in node.children
-        if isfinite(values[j])
+  diff[r] = 1.0
+  function dx(i::Int, n::Node)
+    if issum(n)
+      for (j, c) in enumerate(n.children) diff[c] += node.weights[j] * diff[n] end
+    elseif isprod(n)
+      for c in node.children
+        if isfinite(values[c])
           # @assert isfinite(exp(values[i]-values[j]))  "contribution to derivative of ($i,$j) is not finite: $(values[i]), $(values[j]), $(exp(values[i]-values[j]))"
-          diff[j] += diff[i] * exp(values[i] - values[j])
+          diff[c] += diff[n] * exp(values[n] - values[c])
         else
-          δ = exp(sum(values[k] for k in node.children if k ≠ j))
+          δ = exp(sum(values[k] for k in n.children if k ≠ j))
           # @assert isfinite(δ)  "contribution to derivative of ($i,$j) is not finite: $(values[i]), $(values[j]), $(δ)"
-          diff[j] += diff[i] * δ
+          diff[c] += diff[n] * δ
         end
       end
     end
   end
+  foreach(dx, r)
 end
 
 # compute log derivatives (not working!)
-function logbackpropagate(circ::Circuit, values::Vector{Float64}, diff::Vector{Float64})
+function logbackpropagate!(r::Node, values::Vector{Float64}, diff::Vector{Float64})
   # Assumes network has been evaluted at some assignment using logpdf!
   # Backpropagate derivatives
   @assert length(diff) == length(circ) == length(values)
@@ -80,32 +76,33 @@ function logbackpropagate(circ::Circuit, values::Vector{Float64}, diff::Vector{F
 end
 
 """
+    backpropagate(r::Node, values::Dict{Node, Float64})::Dict{Node, Float64}
+
 Computes derivatives for given vector of values propagated in log domain.
 
 Returns vector of derivatives.
 """
-function backpropagate(circ::Circuit, values::Vector{Float64})::Vector{Float64}
-  diff = Array{Float64}(undef, length(circ))
-  backpropagate!(diff, circ, values)
+function backpropagate(r::Node, values::Dict{Node, Float64})::Dict{Node, Float64}
+  diff = Dict{Node, Float64}()
+  backpropagate!(diff, r, values)
   return diff
 end
 
 """
 Random initialization of weights
 """
-function initialize(learner::ParameterLearner) 
-  circ = learner.circ
-  sumnodes = filter(i -> isa(circ[i], Sum), 1:length(circ))
-  for i in sumnodes
-    #@inbounds ch = circ[i].children  # children(circ,i)
-    @inbounds Random.rand!(circ[i].weights)
-    @inbounds circ[i].weights ./= sum(circ[i].weights)
-    @assert sum(circ[i].weights) ≈ 1.0 "Unnormalized weight vector at node $i: $(sum(circ[i].weights)) | $(circ[i].weights)"
+function initialize(learner::ParameterLearner)
+  r = learner.root
+  function f(i::Int, n::Node)
+    if issum(n)
+      @inbounds Random.rand!(n.weights)
+      @inbounds n.weights ./= sum(n.weights)
+      @assert sum(n.weights) ≈ 1.0 "Unnormalized weight vector at node $i: $(sum(n.weights)) | $(n.weights)"
+    elseif n isa Gaussian
+      @inbounds n.mean = rand()
+      @inbounds n.variance = 1.0
+    end
   end
-  gaussiannodes = filter(i -> isa(circ[i], Gaussian), 1:length(circ))
-  for i in gaussiannodes
-    @inbounds circ[i].mean = rand()
-    @inbounds circ[i].variance = 1.0
-  end
+  foreach(f, r)
 end
 export initialize
