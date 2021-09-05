@@ -5,28 +5,22 @@
 Learn weights using the Expectation Maximization algorithm.
 """
 mutable struct SEM <: ParameterLearner
-  circ::Circuit
-  layers::Vector{Vector{Int}}
-  previous::Circuit # for performing temporary updates and applying momentum
-  diff::Vector{Float64} # to store derivatives
-  values::Vector{Float64} # to store logprobabilities
+  root::Node
+  layers::Vector{Vector{Node}}
+  previous::Node # for performing temporary updates and applying momentum
+  layersp::Vector{Vector{Node}}
+  cmap::Dict{Node, Node} # mapping of each node in root to corresponding copy in previous
+  diff::Dict{Node, Float64} # to store derivatives
+  values::Dict{Node, Float64} # to store logprobabilities
   score::Float64     # score (loglikelihood)
   prevscore::Float64 # for checking convergence
   tolerance::Float64 # tolerance for convergence criterion
   steps::Integer   # number of learning steps (epochs)
   minimumvariance::Float64 # minimum variance for Gaussian leaves
-  SEM(circ::Circuit) = new(
-    circ,
-    layers(circ),
-    deepcopy(circ),
-    Array{Float64}(undef, length(circ)),
-    Array{Float64}(undef, length(circ)),
-    NaN,
-    NaN,
-    1e-4,
-    0,
-    0.5,
-  )
+  function SEM(r::Node)
+    p, M = mapcopy(r; converse = true)
+    return new(r, layers(r), p, layers(p), M, Dict{Node, Float64}(), Dict{Node, Float64}(), NaN, NaN, 1e-4, 0, 0.5)
+  end
 end
 export SEM
 
@@ -66,17 +60,18 @@ function update(
 
   numrows, numcols = size(Data)
 
-  circ_p = learner.circ      # current parameters
-  circ_n = learner.previous # updated parameters
+  root_p = learner.root # current parameters
+  root_n = learner.previous # updated parameters
+  M = learner.cmap
   # # @assert numcols == circ._numvars "Number of columns should match number of variables in network."
   score = 0.0 # data loglikelihood
-  sumnodes = filter(i -> isa(circ_p[i], Sum), 1:length(circ_p))
+  sumnodes = sums(root_p)
   if learngaussians
-    gaussiannodes = filter(i -> isa(circ_p[i], Gaussian), 1:length(circ_p))
+    gaussiannodes = nodes(root_p; f = Base.Fix2(isa, Gaussian))
     if length(gaussiannodes) > 0
-        means = Dict{Integer,Float64}(i => 0.0 for i in gaussiannodes)
-        squares = Dict{Integer,Float64}(i => 0.0 for i in gaussiannodes)
-        denon = Dict{Integer,Float64}(i => 0.0 for i in gaussiannodes)
+        means = Dict{Node, Float64}(n => 0.0 for n in gaussiannodes)
+        squares = Dict{Node, Float64}(n => 0.0 for n in gaussiannodes)
+        denon = Dict{Node, Float64}(n => 0.0 for n in gaussiannodes)
     end
   end
   #diff = zeros(Float64, length(circ))
@@ -88,57 +83,61 @@ function update(
   for t in 1:numrows
     datum = view(Data, t, :)
     #lv = logpdf!(values,circ,datum) # propagate input Data[i,:]
-    lv = plogpdf!(values, circ_p, learner.layers, datum) # parallelized version
+    lv = plogpdf!(values, root_p, learner.layers, datum) # parallelized version
     @assert isfinite(lv) "logvalue of datum $t is not finite: $lv"
     score += lv
     #TODO: implement multithreaded version of backpropagate
-    backpropagate!(diff, circ_p, values) # backpropagate derivatives
-    Threads.@threads for i in sumnodes # update each node in parallel
-      @inbounds for (k, j) in enumerate(circ_p[i].children)
+    backpropagate!(diff, root_p, values) # backpropagate derivatives
+    Threads.@threads for n in sumnodes # update each node in parallel
+      @inbounds for (j, c) in enumerate(n.children)
         # @assert isfinite(diff[i]) "derivative of node $i is not finite: $(diff[i])"
         # @assert !isnan(values[j]) "value of node $j is NaN: $(values[j])"
-        if isfinite(values[j])
-          δ = circ_p[i].weights[k] * diff[i] * exp(values[j] - lv) # improvement
+        u = values[c]
+        if isfinite(u)
+          δ = n.weights[j] * diff[n] * exp(u - lv) # improvement
           # @assert isfinite(δ) "improvement to weight ($i,$j):$(circ_p[i].weights[k]) is not finite: $δ, $(diff[i]), $(values[j]), $(exp(values[j]-lv))"
           if !isfinite(δ) δ = 0.0 end
         else
           δ = 0.0
         end
-        circ_n[i].weights[k] = ((t - 1) / t) * circ_n[i].weights[k] + δ / t # running average for improved precision
+        p = M[n]
+        p.weights[j] = ((t - 1) / t) * p.weights[j] + δ / t # running average for improved precision
       end
     end
     if learngaussians
-      Threads.@threads for i in gaussiannodes
-          @inbounds α = diff[i]*exp(values[i]-lv)
-          @inbounds denon[i] += α
-          @inbounds means[i] += α*datum[circ_p[i].scope]
-          @inbounds squares[i] += α*(datum[circ_p[i].scope]^2)
+      Threads.@threads for n in gaussiannodes
+        α = diff[n]*exp(values[n]-lv)
+        u = datum[n.scope]
+        denon[n] += α
+        means[n] += α*u
+        squares[n] += α*u*u
       end
     end
   end
   # Do update
   # TODO: implement momentum acceleration (nesterov acceleration, Adam, etc)
   # newweights =  log.(newweights) .+ maxweights
-  @inbounds Threads.@threads for i in sumnodes
-    circ_n[i].weights .+= smoothing / length(circ_n[i].weights) # smoothing factor to prevent degenerate probabilities
-    circ_n[i].weights .*= learningrate / sum(circ_n[i].weights) # normalize weights
+  Threads.@threads for n in sumnodes
+    p = M[n]
+    p.weights .+= smoothing / length(p.weights) # smoothing factor to prevent degenerate probabilities
+    p.weights .*= learningrate / sum(p.weights) # normalize weights
     # online update: θ[t+1] = (1-η)*θ[t] + η*update(θ[t])
-    circ_n[i].weights .+= (1.0 - learningrate) * circ_p[i].weights
-    circ_n[i].weights ./= sum(circ_n[i].weights)
+    p.weights .+= (1.0 - learningrate) * n.weights
+    p.weights ./= sum(p.weights)
     # @assert sum(circ_n[i].weights) ≈ 1.0 "Unnormalized weight vector at node $i: $(sum(circ_n[i].weights)) | $(circ_n[i].weights) | $(circ_p[i].weights)"
   end
   if learngaussians
-    Threads.@threads for i in gaussiannodes
-        # online update: θ[t+1] = (1-η)*θ[t] + η*update(θ[t])
-        @inbounds circ_n[i].mean = learningrate*means[i]/denon[i] + (1-learningrate)*circ_p[i].mean
-        @inbounds circ_n[i].variance = learningrate*(squares[i]/denon[i] - (circ_n[i].mean)^2) + (1-learningrate)*circ_p[i].variance
-        @inbounds if circ_n[i].variance < minimumvariance
-            @inbounds circ_n[i].variance = minimumvariance
-        end
+    Threads.@threads for n in gaussiannodes
+      p = M[n]
+      # online update: θ[t+1] = (1-η)*θ[t] + η*update(θ[t])
+      @inbounds p.mean = learningrate*means[n]/denon[n] + (1-learningrate)*n.mean
+      @inbounds p.variance = learningrate*(squares[n]/denon[n] - (p.mean)^2) + (1-learningrate)*n.variance
+      if p.variance < minimumvariance p.variance = minimumvariance end
     end
   end
-  learner.previous = circ_p
-  learner.circ = circ_n
+  learner.previous = root_p
+  learner.circ = root_n
+  learner.layers, learner.layersp = learner.layersp, learner.layers
   learner.steps += 1
   learner.prevscore = learner.score
   learner.score = -score / numrows
@@ -153,35 +152,33 @@ export update
 Learn weights using the Accelerated Expectation Maximization algorithm.
 """
 mutable struct SQUAREM <: ParameterLearner
-  circ::Circuit
-  layers::Vector{Vector{Int}}
-  cache1::Circuit
-  cache2::Circuit
-  cache3::Circuit
-  cache4::Circuit
-  diff::Vector{Float64} # to store derivatives
-  values::Vector{Float64} # to store logprobabilities
+  root::Node
+  layers::Vector{Vector{Node}}
+  layersp::Vector{Vector{Node}}
+  cache1::Node
+  cache2::Node
+  cache3::Node
+  cache4::Node
+  cache1_map::Dict{Node, Node}
+  cache2_map::Dict{Node, Node}
+  cache3_map::Dict{Node, Node}
+  cache4_map::Dict{Node, Node}
+  diff::Dict{Node, Float64} # to store derivatives
+  values::Dict{Node, Float64} # to store logprobabilities
   # dataset::AbstractMatrix
   score::Float64     # score (loglikelihood)
   prevscore::Float64 # for checking convergence
   tolerance::Float64 # tolerance for convergence criterion
   steps::Integer   # number of learning steps (epochs)
   minimumvariance::Float64 # minimum variance for Gaussian leaves
-  SQUAREM(circ::Circuit) = new(
-    circ,
-    layers(circ),
-    deepcopy(circ),
-    deepcopy(circ),
-    deepcopy(circ),
-    deepcopy(circ),
-    Array{Float64}(undef, length(circ)),
-    Array{Float64}(undef, length(circ)),
-    NaN,
-    NaN,
-    1e-3,
-    0,
-    0.5,
-  )
+  function SQUAREM(r::Node)
+    a, amap = mapcopy(r)
+    b, bmap = mapcopy(r)
+    c, cmap = mapcopy(r)
+    d, dmap = mapcopy(r)
+    return new(r, layers(r), layers(a), a, b, c, d, amap, bmap, cmap, dmap, Dict{Node, Float64}(),
+               Dict{Node, Float64}(), NaN, NaN, 1e-3, 0, 0.5)
+  end
 end
 export SQUAREM
 
@@ -224,7 +221,11 @@ function update(
   θ_2 = learner.cache2
   r = learner.cache3
   v = learner.cache4
-  sumnodes = filter(i -> isa(learner.circ[i], Sum), 1:length(learner.circ))
+  μ_1 = learner.cache1_map
+  μ_2 = learner.cache2_map
+  μ_r = learner.cache3_map
+  μ_v = learner.cache4_map
+  sumnodes = sums(θ_0)
   # if learngaussians
   #   gaussiannodes = filter(i -> isa(circ_p[i], Gaussian), 1:length(circ_p))
   #   if length(gaussiannodes) > 0
@@ -241,16 +242,17 @@ function update(
     lv = plogpdf!(values, θ_0, learner.layers, datum) # parallelized version
     @assert isfinite(lv) "1. logvalue of datum $t is not finite: $lv"
     backpropagate!(diff, θ_0, values) # backpropagate derivatives
-    Threads.@threads for i in sumnodes # update each node in parallel
-      @inbounds for (k, j) in enumerate(learner.circ[i].children)
-        if isfinite(values[j])
-          δ = θ_0[i].weights[k] * diff[i] * exp(values[j] - lv) # improvement
-          @assert isfinite(δ) "1. improvement to weight ($i,$j):$(θ_0[i].weights[k]) is not finite: $δ, $(diff[i]), $(values[j]), $(exp(values[j]-lv))"
+    Threads.@threads for n in sumnodes # update each node in parallel
+      @inbounds for (j, c) in enumerate(n.children)
+        if isfinite(values[c])
+          δ = n.weights[j] * diff[n] * exp(values[c] - lv) # improvement
+          @assert isfinite(δ) "1. improvement to weight ($n,$c):$(n.weights[j]) is not finite: $δ, $(diff[n]), $(values[j]), $(exp(values[c]-lv))"
         else
           δ = 0.0
         end
-        θ_1[i].weights[k] = ((t - 1) / t) * θ_1[i].weights[k] + δ / t # running average for improved precision
-        @assert θ_1[i].weights[k] ≥ 0
+        u = μ_1[n]
+        u.weights[j] = ((t - 1) / t) * u.weights[j] + δ / t # running average for improved precision
+        @assert u.weights[j] ≥ 0
       end
     end
     # if learngaussians
@@ -262,13 +264,14 @@ function update(
     #   end
     # end
   end
-  @inbounds Threads.@threads for i in sumnodes
+  @inbounds Threads.@threads for n in sumnodes
     # println(θ_1[i].weights)
-    θ_1[i].weights .+= smoothing / length(θ_1[i].weights) # smoothing factor to prevent degenerate probabilities
+    u = μ_1[n]
+    u.weights .+= smoothing / length(u.weights) # smoothing factor to prevent degenerate probabilities
     # println("  ", θ_1[i].weights)
-    θ_1[i].weights ./= sum(θ_1[i].weights)
+    u.weights ./= sum(u.weights)
     # println("    ", θ_1[i].weights)
-    @assert sum(θ_1[i].weights) ≈ 1.0 "1. Unnormalized weight vector at node $i: $(sum(θ_1[i].weights)) | $(θ_1[i].weights)"
+    @assert sum(u.weights) ≈ 1.0 "1. Unnormalized weight vector at node $n: $(sum(u.weights)) | $(u.weights)"
   end
   # if learngaussians
   #   Threads.@threads for i in gaussiannodes
@@ -286,19 +289,19 @@ function update(
   # Compute theta2 = EM_Update(theta1)
   for t in 1:numrows
     datum = view(Data, t, :)
-    lv = plogpdf!(values, θ_1, learner.layers, datum) # parallelized version
+    lv = plogpdf!(values, θ_1, learner.layersp, datum) # parallelized version
     @assert isfinite(lv) "2. logvalue of datum $t is not finite: $lv"
     backpropagate!(diff, θ_1, values) # backpropagate derivatives
-    Threads.@threads for i in sumnodes # update each node in parallel
-      @inbounds for (k, j) in enumerate(learner.circ[i].children)
-        if isfinite(values[j])
-          δ = θ_1[i].weights[k] * diff[i] * exp(values[j] - lv) # improvement
-          @assert isfinite(δ) "2. improvement to weight ($i,$j):$(θ_1[i].weights[k]) is not finite: $δ, $(diff[i]), $(values[j]), $(exp(values[j]-lv))"
-        else
-          δ = 0.0
-        end
-        θ_2[i].weights[k] = ((t - 1) / t) * θ_2[i].weights[k] + δ / t
-        @assert θ_2[i].weights[k] ≥ 0
+    Threads.@threads for n in sumnodes # update each node in parallel
+      @inbounds for (j, c) in enumerate(n.children)
+        if isfinite(values[c])
+          u = μ_1[n]
+          δ = u.weights[j] * diff[c] * exp(values[c] - lv) # improvement
+          @assert isfinite(δ) "2. improvement to weight ($n,$c):$(u.weights[j]) is not finite: $δ, $(diff[n]), $(values[c]), $(exp(values[c]-lv))"
+        else δ = 0.0 end
+        u = μ_2[n]
+        u.weights[j] = ((t - 1) / t) * u.weights[j] + δ / t
+        @assert u.weights[j] ≥ 0
       end
     end
     # if learngaussians
@@ -310,13 +313,14 @@ function update(
     #   end
     # end
   end
-  @inbounds Threads.@threads for i in sumnodes
+  @inbounds Threads.@threads for n in sumnodes
     # println(θ_2[i].weights)
-    θ_2[i].weights .+= smoothing / length(θ_2[i].weights) # smoothing factor to prevent degenerate probabilities
+    u = μ_2[n]
+    u.weights .+= smoothing / length(u.weights) # smoothing factor to prevent degenerate probabilities
     # println("  ", θ_2[i].weights)
-    θ_2[i].weights ./= sum(θ_2[i].weights)
+    u.weights ./= sum(u.weights)
     # println("    ", θ_2[i].weights)
-    @assert sum(θ_2[i].weights) ≈ 1.0 "2. Unnormalized weight vector at node $i: $(sum(θ_2[i].weights)) | $(θ_2[i].weights)"
+    @assert sum(u.weights) ≈ 1.0 "2. Unnormalized weight vector at node $n: $(sum(u.weights)) | $(u.weights)"
   end
   # if learngaussians
   #   Threads.@threads for i in gaussiannodes
@@ -328,14 +332,17 @@ function update(
   #   end  
   # Compute r, v, |r| and |v|
   r_norm, v_norm = 0.0, 0.0
-  @inbounds Threads.@threads for i in sumnodes
+  @inbounds Threads.@threads for n in sumnodes
     # r[i].weights .= θ_1[i].weights .- θ_0[i].weights
     # v[i].weights .= θ_2[i].weights .- θ_1[i].weights .- r[i].weights
-    for k in 1:length(r[i].weights)
-      r[i].weights[k] = θ_1[i].weights[k] - θ_0[i].weights[k]
-      v[i].weights[k] = θ_2[i].weights[k] - θ_1[i].weights[k] - r[i].weights[k]
-      r_norm += r[i].weights[k] * r[i].weights[k]
-      v_norm += v[i].weights[k] * v[i].weights[k]
+    p, q = μ_r[n], μ_v[n]
+    a, b = μ_1[n], μ_2[n]
+    c = μ_0[n]
+    for k in 1:length(u.weights)
+      p.weights[k] = a.weights[k] - c.weights[k]
+      q.weights[k] = b.weights[k] - a.weights[k] - p.weights[k]
+      r_norm += p.weights[k] * p.weights[k]
+      v_norm += q.weights[k] * q.weights[k]
     end
     # r_norm += sum(r[i].weights .* r[i].weights)
     # v_norm += sum(v[i].weights .* v[i].weights)
@@ -344,43 +351,44 @@ function update(
   α = -max(sqrt(r_norm) / sqrt(v_norm), 1)
   #println("α: $α")
   # Compute θ' (reuse θ_1 for that matter)
-  @inbounds Threads.@threads for i in sumnodes
+  @inbounds Threads.@threads for n in sumnodes
     # θ' = θ0 - 2αr + α^2v
-    θ_1[i].weights .= θ_0[i].weights
-    θ_1[i].weights .-= ((2 * α) .* r[i].weights)
-    θ_1[i].weights .+= ((α * α) .* v[i].weights)
-    θ_1[i].weights .+ smoothing / length(θ_1[i].weights) # add term to prevent negative weights due to numerical imprecision
-    θ_1[i].weights ./= sum(θ_1[i].weights)
-    @assert sum(θ_1[i].weights) ≈ 1.0 "3. Unnormalized weight vector at node $i: $(sum(θ_1[i].weights)) | $(θ_1[i].weights)"
-    for w in θ_1[i].weights
-      @assert w ≥ 0 "Negative weight at node $i: $(θ_1[i].weights)"
-    end
+    p, q = μ_1[n], μ_0[n]
+    a, b = μ_r[n], μ_v[n]
+    p.weights .= q.weights
+    p.weights .-= ((2 * α) .* a.weights)
+    p.weights .+= ((α * α) .* b.weights)
+    p.weights .+ smoothing / length(p.weights) # add term to prevent negative weights due to numerical imprecision
+    p.weights ./= sum(p.weights)
+    @assert sum(p.weights) ≈ 1.0 "3. Unnormalized weight vector at node $n: $(sum(p.weights)) | $(p.weights)"
+    for w in p.weights @assert w ≥ 0 "Negative weight at node $n: $(p.weights)" end
   end
   # Final EM Update: θ_0 = EM_Update(θ')
   score = 0.0 # data loglikelihood
   for t in 1:numrows
     datum = view(Data, t, :)
-    lv = plogpdf!(values, θ_1, learner.layers, datum) # parallelized version
+    lv = plogpdf!(values, θ_1, learner.layersp, datum) # parallelized version
     @assert isfinite(lv) "4. logvalue of datum $t is not finite: $lv"
     score += lv
     backpropagate!(diff, θ_1, values) # backpropagate derivatives
-    Threads.@threads for i in sumnodes # update each node in parallel
-      @inbounds for (k, j) in enumerate(learner.circ[i].children)
-        if isfinite(values[j])
-          δ = θ_1[i].weights[k] * diff[i] * exp(values[j] - lv) # improvement
-          @assert isfinite(δ) "4. improvement to weight ($i,$j):$(θ_1[i].weights[k]) is not finite: $δ, $(diff[i]), $(values[j]), $(exp(values[j]-lv))"
+    Threads.@threads for n in sumnodes # update each node in parallel
+      @inbounds for (j, c) in enumerate(n.children)
+        if isfinite(values[c])
+          u = μ_1[n]
+          δ = u.weights[j] * diff[n] * exp(values[n] - lv) # improvement
+          @assert isfinite(δ) "4. improvement to weight ($n,$c):$(u.weights[j]) is not finite: $δ, $(diff[n]), $(values[n]), $(exp(values[n]-lv))"
         else
           δ = 0.0
         end
-        θ_0[i].weights[k] = ((t - 1) / t) * θ_0[i].weights[k] + δ / t
-        @assert θ_0[i].weights[k] ≥ 0
+        n.weights[j] = ((t - 1) / t) * n.weights[j] + δ / t
+        @assert n.weights[j] ≥ 0
       end
     end
   end
-  @inbounds Threads.@threads for i in sumnodes
-    θ_0[i].weights .+= smoothing / length(θ_0[i].weights) # smoothing factor to prevent degenerate probabilities
-    θ_0[i].weights ./= sum(θ_0[i].weights)
-    @assert sum(θ_0[i].weights) ≈ 1.0 "4. Unnormalized weight vector at node $i: $(sum(θ_0[i].weights)) | $(θ_0[i].weights)"
+  @inbounds Threads.@threads for n in sumnodes
+    n.weights .+= smoothing / length(n.weights) # smoothing factor to prevent degenerate probabilities
+    n.weights ./= sum(n.weights)
+    @assert sum(n.weights) ≈ 1.0 "4. Unnormalized weight vector at node $n: $(sum(n.weights)) | $(n.weights)"
   end
   learner.steps += 1
   learner.prevscore = learner.score
