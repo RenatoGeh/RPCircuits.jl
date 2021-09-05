@@ -154,7 +154,9 @@ function plogpdf!(
         # log-sum-exp trick to improve numerical stability (assumes weights are normalized)
         m = -Inf
         # get maximum incoming value
-        for c in n.children (values[c] > m) && (m = values[c]) end
+        for c in n.children
+          (values[c] > m) && (m = values[c])
+        end
         lval = 0.0
         for (i, c) in enumerate(node.children)
           # ensure exp in only computed on nonpositive arguments (avoid overflow)

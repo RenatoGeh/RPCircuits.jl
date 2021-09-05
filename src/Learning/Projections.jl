@@ -329,7 +329,7 @@ function learn_only_projections!(
         σ = std(pos_data; dims = 1)
       end
       for j in 1:n
-        if binarize pos.children[j] = Sum([⊥[j], ⊤[j]] [1-θ[j], θ[j]])
+        if binarize pos.children[j] = Sum([⊥[j], ⊤[j]], [1-θ[j], θ[j]])
         else pos.children[j] = Gaussian(j, μ[j], isnan(σ[j]) || σ[j] == 0 ? 0.05 : σ[j]*σ[j]) end
       end
     elseif !factorize_pos_sub

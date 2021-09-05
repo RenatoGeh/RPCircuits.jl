@@ -49,7 +49,7 @@ function Base.summary(io::IO, r::Node)
     elseif isproj(circ[i]) lenproj += 1
     else lenleaves += 1 end
   end
-  lenvars = length(scope(circ))
+  lenvars = length(scope(r))
   return print(
     io,
     "Circuit with ",

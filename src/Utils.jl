@@ -83,3 +83,47 @@ Returns all ⊤ and ⊥ indicators for each variable in X.
 function indicators(X::Union{AbstractVector{<:Integer}, UnitRange})::Tuple{Vector{Indicator}, Vector{Indicator}}
   return [Indicator(i, 0) for i ∈ X], [Indicator(i, 1) for i ∈ X]
 end
+
+"""
+    mapcopy(r::Node)::Tuple{Node, Dict{Node, Node}}
+
+Returns a deep copy of the circuit rooted at `r` and a mapping of each node in `r`'s network to its copy and vice-versa.
+"""
+function mapcopy(r::Node; converse::Bool = false)::Tuple{Node, Dict{Node, Node}}
+  M = Dict{Node, Node}()
+  function passdown(n::Node)
+    if issum(n)
+      Ch = Vector{Node}(undef, length(n.children))
+      for (i, c) ∈ enumerate(n.children)
+        if c ∉ M
+          M[c] = c # Temporarily set this as visited.
+          u = passdown(c)
+          M[c] = u # On backtrack, set this to the correct value.
+          M[u] = c
+          Ch[i] = u
+        end
+      end
+      return Sum(Ch, copy(n.weights))
+    elseif isprod(n)
+      Ch = Vector{Node}(undef, length(n.children))
+      for (i, c) ∈ enumerate(n.children)
+        if c ∉ M
+          M[c] = c
+          u = passdown(c)
+          M[c] = u
+          M[u] = c
+          Ch[i] = u
+        end
+      end
+      return Product(Ch)
+    end
+    u = copy(n)
+    M[n] = u
+    M[u] = n
+    return u
+  end
+  z = passdown(r)
+  M[r] = z
+  M[z] = r
+  return z, M
+end
