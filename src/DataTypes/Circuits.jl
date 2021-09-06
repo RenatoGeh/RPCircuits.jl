@@ -11,7 +11,8 @@ Returns list of node layers. Each node in a layer is a function of nodes in prev
 function layers(r::Node)::Vector{Vector{Node}}
   L = Vector{Vector{Node}}()
   Q = Tuple{Node, Int}[(r, 1)]
-  V = Set{Node}(r)
+  V = Set{Node}()
+  push!(V, r)
   while !isempty(Q)
     u, l = popfirst!(Q)
     if length(L) < l push!(L, Node[u])
@@ -53,7 +54,6 @@ end
 export nodes
 
 function Base.foreach(f::Function, r::Node)
-  N = Node[r]
   V = Set{Node}()
   Q = Node[r]
   i = 0
@@ -64,8 +64,8 @@ function Base.foreach(f::Function, r::Node)
     if isleaf(u) continue end
     for c ∈ u.children
       if c ∉ V
-        push!(N, c)
         push!(V, c)
+        push!(Q, c)
       end
     end
   end
@@ -76,9 +76,9 @@ end
 Select nodes by topology
 """
 @inline leaves(r::Node) = nodes(r; f = Base.Fix2(isa, Leaf))
-@inline sums(r::Node) = nodes(r; f = n -> Base.Fix2(isa, Sum))
-@inline products(r::Node) = nodes(r; f = n -> Base.Fix2(isa, Product))
-@inline projections(r::Node) = nodes(r; f = n -> Base.Fix2(isa, Projections))
+@inline sums(r::Node) = nodes(r; f = Base.Fix2(isa, Sum))
+@inline products(r::Node) = nodes(r; f = Base.Fix2(isa, Product))
+@inline projections(r::Node) = nodes(r; f = Base.Fix2(isa, Projections))
 @inline root(r::Node) = r
 
 #TODO #variables(c::Circuit) = collect(1:c._numvars)
@@ -156,8 +156,7 @@ Returns a dictionary of scopes for every node in the circuit rooted at `r`.
 function scopes(r::Node)::Dict{Node, BitSet}
   sclist = Dict{Node, BitSet}()
   N = nodes(r)
-  for i in length(c):-1:1
-    node = N[i]
+  for node in Iterators.reverse(N)
     if isleaf(node)
       sclist[node] = BitSet(node.scope)
     elseif issum(node) # assume completeness
@@ -181,11 +180,10 @@ The projected circuit assigns the same values to configurations that agree on ev
 The scope of the generated circuit contains query and evidence variables, but not marginalized variables.
 """
 function project(r::Node, query::AbstractSet, evidence::AbstractVector)
-  # TODO: refactor away from Circuit
   nodes = Dict{UInt, Node}()
   # evaluate circuit to collect node values
-  vals = Array{Float64}(undef, length(c))
-  RPCircuits.logpdf!(vals, c, evidence)
+  vals = Dict{Node, Float64}()
+  logpdf!(vals, c, evidence)
   # println(exp(vals[1]))
   # collect marginalized variables
   marginalized = Set(Base.filter(i -> (isnan(evidence[i]) && (i ∉ query)), 1:length(evidence)))
@@ -486,3 +484,20 @@ end
 @inline Base.:(*)(x::Node, y::Node)::Product = Product([x, y])
 @inline function Base.:(*)(p::Node, q::Product)::Product push!(q.children, p); return q end
 @inline Base.:(*)(p::Product, q::Node)::Product = q*p
+
+@inline function Base.size(r::Node)::Tuple{Int, Int, Int}
+  s, p, l = 0, 0, 0
+  function f(i::Int, n::Node)
+    if issum(n) s += 1
+    elseif isprod(n) p += 1
+    else l += 1 end
+    return nothing
+  end
+  foreach(f, r)
+  return s, p, l
+end
+
+@inline function Base.length(r::Node)::Int
+  n = 0; foreach(x -> n += 1, r)
+  return n
+end

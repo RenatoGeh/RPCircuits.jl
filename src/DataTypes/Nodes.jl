@@ -5,6 +5,7 @@ Implement a labeled sparse matrix.
 """
 abstract type Node end
 abstract type Inner <: Node end
+export Node, Inner
 
 """
 Sum node data type
@@ -32,6 +33,7 @@ export Product
 Abstract leaf node type
 """
 abstract type Leaf <: Node end
+export Leaf
 
 """
 Indicator Function Node. Tolerance sets a maximum discrepancy when evaluating the node at a given

@@ -91,9 +91,10 @@ computations if `JULIA_NUM_THREADS > 1`.
 function logpdf(r::Node, X::Data)::Float64
   k = Threads.nthreads()
   N = nodes(r)
+  n = size(X, 1)
   if k == 1
     values = Dict{Node, Float64}()
-    return sum(logpdf!(values, N, view(X, i, :)) for i ∈ 1:size(X, 1))
+    return sum(logpdf!(values, N, view(X, i, :)) for i ∈ 1:n)
   end
   values = [Dict{Node, Float64}() for i ∈ 1:Threads.nthreads()]
   s = Threads.Atomic{Float64}(0.0)
@@ -142,6 +143,7 @@ function plogpdf!(
     nlayers::Vector{Vector{Node}},
     x::AbstractVector{<:Real},
 )::Float64
+  L = Threads.SpinLock()
   # visit layers from last (leaves) to first (root)
   @inbounds for l in length(nlayers):-1:1
     # parallelize computations within layer
@@ -149,7 +151,10 @@ function plogpdf!(
       if isprod(n)
         lval = 0.0
         for c in n.children lval += values[c] end
-        values[i] = isfinite(lval) ? lval : -Inf
+        lval = isfinite(lval) ? lval : -Inf
+        lock(L)
+        values[n] = lval
+        unlock(L)
       elseif issum(n)
         # log-sum-exp trick to improve numerical stability (assumes weights are normalized)
         m = -Inf
@@ -158,15 +163,21 @@ function plogpdf!(
           (values[c] > m) && (m = values[c])
         end
         lval = 0.0
-        for (i, c) in enumerate(node.children)
+        for (j, c) in enumerate(n.children)
           # ensure exp in only computed on nonpositive arguments (avoid overflow)
-          lval += exp(values[c] - m) * node.weights[i]
+          lval += exp(values[c] - m) * n.weights[j]
         end
         # if something went wrong (e.g. incoming value is NaN or Inf) return -Inf, otherwise
         # return maximum plus lval (adding m ensures signficant digits are numerically precise)
-        values[n] = isfinite(lval) ? m + log(lval) : -Inf
+        lval = isfinite(lval) ? m + log(lval) : -Inf
+        lock(L)
+        values[n] = lval
+        unlock(L)
       else # is a leaf node
-        values[n] = logpdf(n, x[n.scope])
+        lval = logpdf(n, x[n.scope])
+        lock(L)
+        values[n] = lval
+        unlock(L)
       end
     end
   end
@@ -179,7 +190,7 @@ export plogpdf!
 
 Parallelized version of `logpdf(r, x)`. Set `JULIA_NUM_THREADS` > 1 to make this effective.
 """
-@inline plogpdf(r::Node, x::AbstractVector{<:Real})::Float64 = plogpdf!(Dict{Node, Float64}, layers(r), x)
+@inline plogpdf(r::Node, x::AbstractVector{<:Real})::Float64 = plogpdf!(Dict{Node, Float64}(), layers(r), x)
 @inline plogpdf(r::Node, X::AbstractMatrix{<:Real})::Float64 = sum(plogpdf(r, view(X, i, :)) for i ∈ 1:size(X, 1))
 export plogpdf
 
@@ -300,7 +311,7 @@ function ncircuits!(values::Dict{Node, Int}, r::Node)
   N = nodes(r)
   for n ∈ Iterators.reverse(N)
     if isa(n, Product)
-      values[n] = mapreduce(u -> values[u], *, node.children)
+      values[n] = mapreduce(u -> values[u], *, n.children)
     elseif isa(n, Sum)
       values[n] = mapreduce(u -> values[u], +, n.children)
     else # is a leaf node

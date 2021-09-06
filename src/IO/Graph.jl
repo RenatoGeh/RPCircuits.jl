@@ -233,6 +233,7 @@ function Circuit(io::IO = stdin; offset::Integer = 0, ind_offset::Integer = 0)
   end
   return nodes[root]
 end
+export Circuit
 
 """
     save(r::Node, filename::String, [offset=0])
