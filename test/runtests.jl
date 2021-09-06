@@ -2,6 +2,8 @@ using Test
 
 using RPCircuits
 
+include("setup.jl")
+
 @testset "Creation, evaluation, sampling" begin
   include("test_discrete.jl")
   include("test_continuous.jl")

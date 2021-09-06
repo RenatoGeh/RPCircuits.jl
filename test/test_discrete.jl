@@ -1,16 +1,8 @@
 @testset "Simple DAG circuit" begin
-  C = Circuit([
-    Sum([2, 3, 4], [0.2, 0.5, 0.3]), # 1
-    Product([5, 7]),                 # 2
-    Product([5, 8]),                 # 3
-    Product([6, 8]),                 # 4
-    Categorical(1, [0.6, 0.4]),      # 5
-    Categorical(1, [0.1, 0.9]),      # 6
-    Categorical(2, [0.3, 0.7]),      # 7
-    Categorical(2, [0.8, 0.2]),      # 8
-  ])
+  C = simple_circuit()
 
   @test length(C) == 8
+  @test size(C) == (1, 3, 4)
   @test ncircuits(C) == 3
   @test nparams(C) == 11
   sc = scope(C)
@@ -19,15 +11,16 @@
 
   @testset "Evaluate node scopes" begin
     scl = scopes(C)
+    N = nodes(C)
     @test length(scl) == 8
-    @test (length(scl[1]) == 2) && (1 in scl[1]) && (2 in scl[1])
-    @test (length(scl[2]) == 2) && (1 in scl[2]) && (2 in scl[2])
-    @test (length(scl[3]) == 2) && (1 in scl[3]) && (2 in scl[3])
-    @test (length(scl[4]) == 2) && (1 in scl[4]) && (2 in scl[4])
-    @test (length(scl[5]) == 1) && (1 in scl[5])
-    @test (length(scl[6]) == 1) && (1 in scl[6])
-    @test (length(scl[7]) == 1) && (2 in scl[7])
-    @test (length(scl[8]) == 1) && (2 in scl[8])
+    @test (length(scl[N[1]]) == 2) && (1 in scl[N[1]]) && (2 in scl[N[1]])
+    @test (length(scl[N[2]]) == 2) && (1 in scl[N[2]]) && (2 in scl[N[2]])
+    @test (length(scl[N[3]]) == 2) && (1 in scl[N[3]]) && (2 in scl[N[3]])
+    @test (length(scl[N[4]]) == 2) && (1 in scl[N[4]]) && (2 in scl[N[4]])
+    @test (length(scl[N[5]]) == 1) && (1 in scl[N[5]])
+    @test (length(scl[N[6]]) == 1) && (1 in scl[N[6]])
+    @test (length(scl[N[7]]) == 1) && (2 in scl[N[7]])
+    @test (length(scl[N[8]]) == 1) && (2 in scl[N[8]])
   end
 
   results = [0.3, 0.15, 0.4, 0.15]
@@ -64,36 +57,22 @@
 end # end of DAG circuit testset
 
 @testset "DAG circuit encoding HMM" begin
-  HMM = Circuit([
-    Sum([2, 3], [0.3, 0.7]),      # 1
-    Product([4, 5]),              # 2
-    Product([6, 7]),              # 3
-    Categorical(1, [0.3, 0.7]),   # 4 (D1)
-    Sum([8, 9], [0.5, 0.5]),      # 5
-    Sum([8, 9], [0.2, 0.8]),      # 6
-    Categorical(1, [0.8, 0.2]),   # 7 (D2)
-    Product([10, 11]),            # 8
-    Product([12, 13]),            # 9
-    Categorical(2, [0.4, 0.6]),   # 10 (D3)
-    Sum([14, 15], [0.6, 0.4]),    # 11
-    Sum([14, 15], [0.4, 0.6]),    # 12
-    Categorical(2, [0.25, 0.75]), # 13 (D4)
-    Categorical(3, [0.9, 0.1]),   # 14 (D5)
-    Categorical(3, [0.42, 0.58]), # 15 (D6)
-  ])
+  HMM = hmm()
 
+  @test size(HMM) == (5, 4, 6)
   @test length(HMM) == 15
   @test ncircuits(HMM) == 8
   @test length(scope(HMM)) == 3
 
   @testset "Evaluate node scopes" begin
     scl = scopes(HMM)
+    N = nodes(HMM)
     @test length(scl) == 15
-    @test (length(scl[1]) == 3) && (1 in scl[1]) && (2 in scl[1]) && (3 in scl[1])
-    @test (length(scl[5]) == 2) && (2 in scl[5]) && (3 in scl[5])
-    @test (length(scl[6]) == 2) && (2 in scl[6]) && (3 in scl[6])
-    @test (length(scl[8]) == 2) && (2 in scl[8]) && (3 in scl[8])
-    @test (length(scl[9]) == 2) && (2 in scl[9]) && (3 in scl[9])
+    @test (length(scl[N[1]]) == 3) && (1 in scl[N[1]]) && (2 in scl[N[1]]) && (3 in scl[N[1]])
+    @test (length(scl[N[5]]) == 2) && (2 in scl[N[5]]) && (3 in scl[N[5]])
+    @test (length(scl[N[6]]) == 2) && (2 in scl[N[6]]) && (3 in scl[N[6]])
+    @test (length(scl[N[8]]) == 2) && (2 in scl[N[8]]) && (3 in scl[N[8]])
+    @test (length(scl[N[9]]) == 2) && (2 in scl[N[9]]) && (3 in scl[N[9]])
   end
 
   results = [
@@ -123,34 +102,25 @@ end # end of DAG circuit testset
   x[3] = NaN
   # project/prune network
 
-  prunedHMM = project(HMM, Set([1]), x)
-  @testset "Projection" for a in 1:2
-    x[1] = a
-    @test HMM(x) ≈ prunedHMM(x)
-  end
+  # prunedHMM = project(HMM, Set([1]), x)
+  # @testset "Projection" for a in 1:2
+    # x[1] = a
+    # @test HMM(x) ≈ prunedHMM(x)
+  # end
 
-  x = [1.0, 1.0, 2.0]
-  prunedHMM = project(HMM, Set([1]), x)
-  @testset "Projection" for a in 1:2
-    x[1] = a
-    @test HMM(x) ≈ prunedHMM(x)
-  end
+  # x = [1.0, 1.0, 2.0]
+  # prunedHMM = project(HMM, Set([1]), x)
+  # @testset "Projection" for a in 1:2
+    # x[1] = a
+    # @test HMM(x) ≈ prunedHMM(x)
+  # end
 end # end of HMM testset
 
 @testset "Selective SPN" begin
-  selSPN = Circuit([
-    Sum([2, 3], [0.4, 0.6]),     # 1
-    Product([4, 5, 6]),          # 2
-    Product([7, 8, 9]),          # 3
-    Indicator(1, 2.0),           # 4
-    Categorical(2, [0.3, 0.7]),  # 5
-    Categorical(3, [0.4, 0.6]),  # 6
-    Categorical(2, [0.8, 0.2]),  # 7
-    Categorical(3, [0.9, 0.1]),  # 8
-    Indicator(1, 1.0),           # 9
-  ])
+  selSPN = selspn()
 
   @test length(selSPN) == 9
+  @test size(selSPN) == (1, 2, 6)
   @test ncircuits(selSPN) == 2
   @test length(scope(selSPN)) == 3
 
@@ -175,35 +145,10 @@ end # end of selective SPN testset
 
 @testset "Circuit encoding PSDD" begin
   # taken from https://github.com/UCLA-StarAI/Circuit-Model-Zoo/blob/master/psdds/little_4var.psdd
-  PSDD = Circuit([
-    Product([2, 3]),                    # 1 (10)
-    Sum(
-      [7, 6, 5, 4],
-      exp.([-1.6094379124341003, -1.2039728043259361, -0.916290731874155, -2.3025850929940455]),
-    ),     # 2 (9)
-    Sum(
-      [11, 10, 9, 8],
-      exp.([-2.3025850929940455, -2.3025850929940455, -2.3025850929940455, -0.35667494393873245]),
-    ), # 3 (8)
-    Product([14, 12]), # 4
-    Product([14, 13]), # 5
-    Product([15, 12]), # 6
-    Product([15, 13]), # 7
-    Product([18, 16]), # 8
-    Product([18, 17]), # 9
-    Product([19, 16]), # 10
-    Product([19, 17]), # 11
-    Indicator(4, 1.0), # 12
-    Indicator(4, 2.0), # 13
-    Indicator(3, 1.0), # 14
-    Indicator(3, 2.0), # 15
-    Indicator(2, 1.0), # 16
-    Indicator(2, 2.0), # 17
-    Indicator(1, 1.0), # 18
-    Indicator(1, 2.0), # 19
-  ])
+  PSDD = psdd()
 
   @test length(PSDD) == 19
+  @test size(PSDD) == (2, 9, 8)
   @test ncircuits(PSDD) == 16
   @test length(scope(PSDD)) == 4
 
