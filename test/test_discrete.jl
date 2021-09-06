@@ -18,9 +18,9 @@
     @test (length(scl[N[3]]) == 2) && (1 in scl[N[3]]) && (2 in scl[N[3]])
     @test (length(scl[N[4]]) == 2) && (1 in scl[N[4]]) && (2 in scl[N[4]])
     @test (length(scl[N[5]]) == 1) && (1 in scl[N[5]])
-    @test (length(scl[N[6]]) == 1) && (1 in scl[N[6]])
+    @test (length(scl[N[6]]) == 1) && (2 in scl[N[6]])
     @test (length(scl[N[7]]) == 1) && (2 in scl[N[7]])
-    @test (length(scl[N[8]]) == 1) && (2 in scl[N[8]])
+    @test (length(scl[N[8]]) == 1) && (1 in scl[N[8]])
   end
 
   results = [0.3, 0.15, 0.4, 0.15]

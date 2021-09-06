@@ -28,6 +28,29 @@ function layers(r::Node)::Vector{Vector{Node}}
     end
   end
   return L
+  # c = nodes(r)
+  # layer = Dict{Node, Int}(n => 0 for n ∈ c) # will contain the layer of each node
+  # layer[r] = 1 # root node is first layer
+  # for i in 1:length(c)
+    # n = c[i]
+    # # travesrse nodes in topological order
+    # if !isleaf(n)
+      # for j in n.children
+        # # child j cannot be in same layer as i, for all i < j
+        # layer[j] = max(layer[j], layer[n] + 1)
+      # end
+    # end
+  # end
+  # # get number of layers
+  # nlayers = maximum(values(layer))
+  # # obtain layers (this is quadratic runtime -- can probably be improved to n log n)
+  # thelayers = Vector()
+  # @inbounds for l in 1:nlayers
+    # # collect all nodes in layer l
+    # thislayer = filter(i -> (layer[i] == l), c)
+    # push!(thelayers, thislayer)
+  # end
+  # return thelayers
 end
 export layers
 
@@ -498,6 +521,6 @@ end
 end
 
 @inline function Base.length(r::Node)::Int
-  n = 0; foreach(x -> n += 1, r)
+  n = 0; foreach((_, x) -> n += 1, r)
   return n
 end

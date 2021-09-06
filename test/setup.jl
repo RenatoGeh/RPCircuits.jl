@@ -24,7 +24,7 @@ function selspn()::Node
                Categorical(3, [0.4, 0.6]),
                Categorical(2, [0.8, 0.2]),
                Categorical(3, [0.9, 0.1])
-  return 0.4*(i_1*a*b)+0.6*(c*d*i_2)
+  return 0.4*(i_2*a*b)+0.6*(c*d*i_1)
 end
 
 function psdd()::Node
