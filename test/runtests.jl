@@ -10,6 +10,6 @@ include("setup.jl")
   include("test_eval.jl")
 end
 
-include("test_vtree.jl")
+# include("test_vtree.jl")
 include("test_queries.jl")
 

@@ -13,12 +13,20 @@ Computes derivatives for values propagated in log domain and stores results in g
 function backpropagate!(diff::Dict{Node, Float64}, r::Node, values::Dict{Node, Float64})
   # Assumes network has been evaluted at some assignment using logpdf!
   # Backpropagate derivatives
+  V = Set{Node}()
+  Q = Node[r]
   diff[r] = 1.0
-  function dx(i::Int, n::Node)
+  while !isempty(Q)
+    n = popfirst!(Q)
     if issum(n)
-      for (j, c) in enumerate(n.children) diff[c] += node.weights[j] * diff[n] end
+      for (j, c) in enumerate(n.children)
+        !haskey(diff, c) && (diff[c] = 0)
+        diff[c] += n.weights[j] * diff[n]
+        if c ∉ V push!(V, c); push!(Q, c) end
+      end
     elseif isprod(n)
-      for c in node.children
+      for (j, c) in enumerate(n.children)
+        !haskey(diff, c) && (diff[c] = 0)
         if isfinite(values[c])
           # @assert isfinite(exp(values[i]-values[j]))  "contribution to derivative of ($i,$j) is not finite: $(values[i]), $(values[j]), $(exp(values[i]-values[j]))"
           diff[c] += diff[n] * exp(values[n] - values[c])
@@ -27,10 +35,11 @@ function backpropagate!(diff::Dict{Node, Float64}, r::Node, values::Dict{Node, F
           # @assert isfinite(δ)  "contribution to derivative of ($i,$j) is not finite: $(values[i]), $(values[j]), $(δ)"
           diff[c] += diff[n] * δ
         end
+        if c ∉ V push!(V, c); push!(Q, c) end
       end
     end
   end
-  foreach(dx, r)
+  return nothing
 end
 
 # compute log derivatives (not working!)
@@ -103,6 +112,6 @@ function initialize(learner::ParameterLearner)
       @inbounds n.variance = 1.0
     end
   end
-  foreach(f, r)
+  foreach(f, r; rev = false)
 end
 export initialize

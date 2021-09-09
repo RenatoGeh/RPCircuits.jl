@@ -95,25 +95,25 @@ function mapcopy(r::Node; converse::Bool = false)::Tuple{Node, Dict{Node, Node}}
     if issum(n)
       Ch = Vector{Node}(undef, length(n.children))
       for (i, c) ∈ enumerate(n.children)
-        if c ∉ M
+        if !haskey(M, c)
           M[c] = c # Temporarily set this as visited.
           u = passdown(c)
           M[c] = u # On backtrack, set this to the correct value.
           M[u] = c
           Ch[i] = u
-        end
+        else Ch[i] = M[c] end
       end
       return Sum(Ch, copy(n.weights))
     elseif isprod(n)
       Ch = Vector{Node}(undef, length(n.children))
       for (i, c) ∈ enumerate(n.children)
-        if c ∉ M
+        if !haskey(M, c)
           M[c] = c
           u = passdown(c)
           M[c] = u
           M[u] = c
           Ch[i] = u
-        end
+        else Ch[i] = M[c] end
       end
       return Product(Ch)
     end

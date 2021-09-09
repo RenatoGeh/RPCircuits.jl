@@ -6,14 +6,14 @@ Prints out Node content
 function Base.show(io::IO, n::Sum)
   print(io, "+")
   for i in 1:length(n.children)
-    print(io, " $(n.children[i]) $(n.weights[i])")
+    print(io, " $i $(n.weights[i])")
   end
 end
 
 function Base.show(io::IO, n::Product)
   print(io, "*")
   for i in 1:length(n.children)
-    print(io, " $(n.children[i])")
+    print(io, " $i")
   end
 end
 
@@ -35,7 +35,7 @@ function Base.show(io::IO, n::Gaussian)
 end
 
 """
-    summary(io::IO, circ::Circuit)
+    summary(io::IO, r::Node)
 
 Print out information about the network rooted at `r` to stream `io`
 """
@@ -168,7 +168,7 @@ end
 
 Reads network from file. Assume 1-based indexing for node ids and values at indicator nodes. Set offset = 1 if these values are 0-based instead. If `ind_offset = 1`, subtract by one values for indicators.
 """
-function Circuit(filename::String; offset::Integer = 0, ind_offset::Integer = 0)::Node
+function Circuit(filename::String; offset::Integer = 0, ind_offset::Integer = 1)::Node
   circ = open(filename) do file
     return circ = Circuit(file; offset, ind_offset)
   end
@@ -177,7 +177,7 @@ end
 
 function Circuit(io::IO = stdin; offset::Integer = 0, ind_offset::Integer = 0)
   # create dictionary of node_id => node (so they can be read in any order)
-  nodes = Dict{Int, Node}()
+  N = Dict{Int, Node}()
   edges = Dict{Int, Vector{Int}}()
   root = 2
   # read and create nodes
@@ -224,14 +224,14 @@ function Circuit(io::IO = stdin; offset::Integer = 0, ind_offset::Integer = 0)
         if σ == 0 σ = 0.001 end
         node = Gaussian(varid, μ, σ*σ)
       end
-      nodes[nodeid] = node
+      N[nodeid] = node
     end
   end
   for (i, E) ∈ edges
-    pa = nodes[i]
-    for (j, e) ∈ enumerate(E) pa.children[j] = nodes[e] end
+    pa = N[i]
+    for (j, e) ∈ enumerate(E) pa.children[j] = N[e] end
   end
-  return nodes[root]
+  return N[root]
 end
 export Circuit
 
@@ -241,9 +241,16 @@ export Circuit
 Writes network rooted at `r` to file. Offset adds constant to node instances (useful for translating to 0 starting indexes).
 """
 function save(r::Node, filename::String, offset = 0)
-  circ = nodes(r)
+  circ, M = vectorize(r)
   open(filename, "w") do io
-    for i in 1:length(circ) println(io, "$i $(circ[i])") end
+    for (i, n) ∈ enumerate(circ)
+      print(io, "$i ")
+      if issum(n)
+        for (j, c) ∈ enumerate(n.children) println(io, "$(M[c]) $(n.weights[j])") end
+      elseif isprod(n)
+        for (j, c) ∈ enumerate(n.children) println(io, "$(M[c])") end
+      else println(io, "$n") end
+    end
   end
 end
 export save

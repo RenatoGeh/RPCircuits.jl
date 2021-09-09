@@ -9,48 +9,29 @@ const Example = Union{AbstractVector{<:Real}, DataFrameRow}
 Returns list of node layers. Each node in a layer is a function of nodes in previous layers. This allows parallelization when computing with the circuit.
 """
 function layers(r::Node)::Vector{Vector{Node}}
-  L = Vector{Vector{Node}}()
-  Q = Tuple{Node, Int}[(r, 1)]
-  V = Set{Node}()
-  push!(V, r)
-  while !isempty(Q)
-    u, l = popfirst!(Q)
-    if length(L) < l push!(L, Node[u])
-    else push!(L[l], u) end
-    if isinner(u)
-      nl = l + 1
-      for c ∈ u.children
-        if c ∉ V
-          push!(Q, (c, nl))
-          push!(V, c)
-        end
+  c = nodes(r)
+  layer = Dict{Node, Int}(n => 0 for n ∈ c) # will contain the layer of each node
+  layer[r] = 1 # root node is first layer
+  for i in 1:length(c)
+    n = c[i]
+    # travesrse nodes in topological order
+    if !isleaf(n)
+      for j in n.children
+        # child j cannot be in same layer as i, for all i < j
+        layer[j] = max(layer[j], layer[n] + 1)
       end
     end
   end
-  return L
-  # c = nodes(r)
-  # layer = Dict{Node, Int}(n => 0 for n ∈ c) # will contain the layer of each node
-  # layer[r] = 1 # root node is first layer
-  # for i in 1:length(c)
-    # n = c[i]
-    # # travesrse nodes in topological order
-    # if !isleaf(n)
-      # for j in n.children
-        # # child j cannot be in same layer as i, for all i < j
-        # layer[j] = max(layer[j], layer[n] + 1)
-      # end
-    # end
-  # end
-  # # get number of layers
-  # nlayers = maximum(values(layer))
-  # # obtain layers (this is quadratic runtime -- can probably be improved to n log n)
-  # thelayers = Vector()
-  # @inbounds for l in 1:nlayers
-    # # collect all nodes in layer l
-    # thislayer = filter(i -> (layer[i] == l), c)
-    # push!(thelayers, thislayer)
-  # end
-  # return thelayers
+  # get number of layers
+  nlayers = maximum(values(layer))
+  # obtain layers (this is quadratic runtime -- can probably be improved to n log n)
+  thelayers = Vector()
+  @inbounds for l in 1:nlayers
+    # collect all nodes in layer l
+    thislayer = filter(i -> (layer[i] == l), c)
+    push!(thelayers, thislayer)
+  end
+  return thelayers
 end
 export layers
 
@@ -60,38 +41,37 @@ export layers
 Collects the list of nodes in `r`, traversing graph in topological order and storing nodes that
 return `true` when function `f` is applied to them. If no function is given, stores every node.
 """
-function nodes(r::Node; f::Union{Nothing, Function} = nothing)::Vector{Node}
-  N = Node[]
+function nodes(r::Node; f::Union{Nothing, Function} = nothing, rev::Bool = true)::Vector{Node}
+  N = Vector{Node}()
   V = Set{Node}()
-  Q = Node[r]
-  while !isempty(Q)
-    u = popfirst!(Q)
-    if isnothing(f) || f(u) push!(N, u) end
-    if isleaf(u) continue end
-    for c ∈ u.children
-      if c ∉ V push!(V, c); push!(Q, c) end
-    end
+  function passdown(n::Node)
+    if n ∈ V return end
+    push!(V, n)
+    if isinner(n) for c ∈ n.children passdown(c) end end
+    (isnothing(f) || f(n)) && push!(N, n)
+    return nothing
   end
+  passdown(r)
+  rev && reverse!(N)
   return N
 end
 export nodes
 
-function Base.foreach(f::Function, r::Node)
+function Base.foreach(f::Function, r::Node; rev::Bool = true)
+  N = rev ? Vector{Node}() : nothing
   V = Set{Node}()
-  Q = Node[r]
   i = 0
-  while !isempty(Q)
-    u = popfirst!(Q)
-    f(i, u)
+  function passdown(n::Node)
+    if n ∈ V return end
+    push!(V, n)
     i += 1
-    if isleaf(u) continue end
-    for c ∈ u.children
-      if c ∉ V
-        push!(V, c)
-        push!(Q, c)
-      end
-    end
+    if isinner(n) for c ∈ n.children passdown(c) end end
+    if rev push!(N, n)
+    else f(i, n) end
+    return nothing
   end
+  passdown(r)
+  rev && foreach(f, enumerate(Iterators.reverse(N)))
   return nothing
 end
 
@@ -105,8 +85,13 @@ Select nodes by topology
 @inline root(r::Node) = r
 
 #TODO #variables(c::Circuit) = collect(1:c._numvars)
-@inline children(r::Inner) = r.children
-export leaves, sums, products, root, projections
+"""
+    children(n::Inner)::Vector{Node}
+
+Returns `n`'s children.
+"""
+@inline children(n::Inner)::Vector{Node} = n.children
+export leaves, sums, products, root, projections, children
 
 """
 Return vector of weights associate to outgoing edges of (sum) node n.
@@ -178,8 +163,8 @@ Returns a dictionary of scopes for every node in the circuit rooted at `r`.
 """
 function scopes(r::Node)::Dict{Node, BitSet}
   sclist = Dict{Node, BitSet}()
-  N = nodes(r)
-  for node in Iterators.reverse(N)
+  N = nodes(r; rev = false)
+  for node in N
     if isleaf(node)
       sclist[node] = BitSet(node.scope)
     elseif issum(node) # assume completeness
@@ -417,8 +402,8 @@ Verifies smoothness.
 """
 function issmooth(r::Node; φ::Dict{Node, BitSet} = Dict{Node, BitSet}())::Bool
   assign = isempty(φ)
-  N = nodes(r)
-  for n ∈ Iterators.reverse(N)
+  N = nodes(r; rev = false)
+  for n ∈ N
     if assign && haskey(φ, n) continue end
     if assign && isleaf(n) φ[n] = BitSet(n.scope)
     elseif !isleaf(n)
@@ -426,9 +411,9 @@ function issmooth(r::Node; φ::Dict{Node, BitSet} = Dict{Node, BitSet}())::Bool
       if issum(n)
         Sc = first(ch)
         for i ∈ 2:length(ch)
-          if ch[i] != S return false end
+          if ch[i] != Sc return false end
         end
-        φ[n] = S
+        φ[n] = Sc
       else assign && (φ[n] = reduce(∪, ch)) end
     end
   end
@@ -441,21 +426,21 @@ Verifies decomposability.
 """
 function isdecomposable(r::Node; φ::Dict{Node, BitSet} = Dict{Node, BitSet}())::Bool
   assign = isempty(φ)
-  N = nodes(r)
-  for n ∈ Iterators.reverse(N)
+  N = nodes(r; rev = false)
+  for n ∈ N
     if assign && haskey(φ, n) continue end
     if assign && isleaf(n) φ[n] = BitSet(n.scope)
     elseif !isleaf(n)
       ch = getindex.(Ref(φ), n.children)
       if isprod(n)
-        Sc = first(ch)
+        Sc = copy(first(ch))
         for i ∈ 2:length(ch)
           if !isempty(ch[i] ∩ Sc) return false end
           union!(Sc, ch[i])
         end
-        φ[j] = Sc
+        φ[n] = Sc
       end
-      assign && (φ[j] = reduce(∪, ch))
+      assign && (φ[n] = reduce(∪, ch))
     end
   end
   return true
@@ -466,9 +451,9 @@ export isdecomposable
 Verifies validity.
 """
 function Base.isvalid(r::Node)::Bool
-  φ = scope(r)
-  N = nodes(r)
-  for n ∈ Iterators.reverse(N)
+  φ = Dict{Node, BitSet}()
+  N = nodes(r; rev = false)
+  for n ∈ N
     if haskey(φ, n) continue end
     if isleaf(n) φ[n] = BitSet(n.scope)
     elseif !isleaf(n)
@@ -476,16 +461,16 @@ function Base.isvalid(r::Node)::Bool
       Sc = first(ch)
       if issum(n)
         for i ∈ 2:length(ch)
-          if ch[i] != S return false end
+          if ch[i] != Sc return false end
         end
-        φ[n] = S
       else
+        Sc = copy(Sc)
         for i ∈ 2:length(ch)
           if !isempty(ch[i] ∩ Sc) return false end
           union!(Sc, ch[i])
         end
-        φ[j] = Sc
       end
+      φ[n] = Sc
     end
   end
   return true
@@ -516,11 +501,24 @@ end
     else l += 1 end
     return nothing
   end
-  foreach(f, r)
+  foreach(f, r; rev = false)
   return s, p, l
 end
 
 @inline function Base.length(r::Node)::Int
-  n = 0; foreach((_, x) -> n += 1, r)
+  n = 0; foreach((_, x) -> n += 1, r; rev = false)
   return n
 end
+
+"""
+    vectorize(r::Node)::Tuple{Vector{Node}, Dict{Node, Int}}
+
+Vectorize the circuit rooted at `r` into a `Vector{Node}` and a mapping of each `Node` into an index.
+"""
+function vectorize(r::Node)::Tuple{Vector{Node}, Dict{Node, Int}}
+  N = Vector{Node}()
+  M = Dict{Node, Int}()
+  foreach((i, x) -> (push!(N, x); M[x] = i), r; rev = false)
+  return reverse!(N), M
+end
+export vectorize

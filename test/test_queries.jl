@@ -4,7 +4,7 @@
 
   # Decomposable but not smooth.
   D = [0.2*(Indicator(2, 0)*Indicator(3, 0))+0.5*(Indicator(4, 0)*Indicator(5, 0))+0.3*Indicator(1, 0),
-       Gaussian(1, 0, 1)*Gaussian(2, 0, 1)*(0.2*Gaussian(4, 0, 1)+0.8*Gaussian(4, 0, 1))*Gaussian(3, 0, 1),
+       Gaussian(1, 0, 1)*Gaussian(2, 0, 1)*(0.2*Gaussian(4, 0, 1)+0.8*Gaussian(5, 0, 1))*Gaussian(3, 0, 1),
        0.5*Categorical(1, [0.3, 0.7])+0.5*Categorical(2, [0.5, 0.5])]
 
   # Smooth but not decomposable.

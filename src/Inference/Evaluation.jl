@@ -40,7 +40,7 @@ function logpdf!(results::AbstractVector{Float64}, r::Node, X::AbstractMatrix{<:
   n = size(X, 1)
   @assert length(results) == n
   values = [Dict{Node, Float64}() for i ∈ 1:Threads.nthreads()]
-  N = nodes(r)
+  N = nodes(r; rev = false)
   Threads.@threads for i ∈ 1:n
     @inbounds results[i] = logpdf!(values[Threads.threadid()], N, view(X, i, :))
   end
@@ -48,13 +48,13 @@ function logpdf!(results::AbstractVector{Float64}, r::Node, X::AbstractMatrix{<:
 end
 
 """
-    logpdf!(values::Dict{Node, Float64}, r::Vector{Node}, x::AbstractVector{<:Real})::Float64
+    logpdf!(values::Dict{Node, Float64}, N::Vector{Node}, x::AbstractVector{<:Real})::Float64
 
-Evaluates the circuit `N` in log domain at configuration `x` and stores values of each node in
-the dictionary `values`.
+Evaluates the reverse-topologically-sorted circuit `N` in log domain at configuration `x` and
+stores values of each node in the dictionary `values`.
 """
 function logpdf!(values::Dict{Node, Float64}, N::Vector{Node}, x::AbstractVector{<:Real})::Float64
-  for n ∈ Iterators.reverse(N)
+  for n ∈ N
     if isprod(n)
       lval = 0.0
       for c ∈ n.children lval += values[c] end
@@ -72,7 +72,7 @@ function logpdf!(values::Dict{Node, Float64}, N::Vector{Node}, x::AbstractVector
       values[n] = logpdf(n, x[n.scope])
     end
   end
-  return values[first(N)]
+  return values[last(N)]
 end
 export logpdf!
 
@@ -90,7 +90,7 @@ computations if `JULIA_NUM_THREADS > 1`.
 """
 function logpdf(r::Node, X::Data)::Float64
   k = Threads.nthreads()
-  N = nodes(r)
+  N = nodes(r; rev = false)
   n = size(X, 1)
   if k == 1
     values = Dict{Node, Float64}()
@@ -124,7 +124,7 @@ S = Circuit(IOBuffer("1 + 2 0.2 3 0.5 4 0.3\n2 * 5 7\n3 * 5 8\n4 * 6 8\n5 catego
 logpdf(S, [NaN, 2])
 ```
 """
-logpdf(r::Node, x::AbstractVector{<:Real})::Float64 = logpdf!(Dict{Node, Float64}(), nodes(r), x)
+logpdf(r::Node, x::AbstractVector{<:Real})::Float64 = logpdf!(Dict{Node, Float64}(), nodes(r; rev = false), x)
 
 """
     plogpdf!(values::Dict{Node, Float64}, nlayers::Vector{Vector{Node}}, x::AbstractVector{<:Real})::Float64
@@ -139,49 +139,55 @@ obtained by the method `layers(circ)`. Stores values of each node in the diction
   - `x`: Vector containing assignment
 """
 function plogpdf!(
-    values::Dict{Node, Float64},
+    I::Dict{Node, Int},
+    V::Vector{Float64},
     nlayers::Vector{Vector{Node}},
     x::AbstractVector{<:Real},
 )::Float64
-  L = Threads.SpinLock()
   # visit layers from last (leaves) to first (root)
   @inbounds for l in length(nlayers):-1:1
     # parallelize computations within layer
     Threads.@threads for n in nlayers[l]
       if isprod(n)
         lval = 0.0
-        for c in n.children lval += values[c] end
+        for c in n.children lval += V[I[c]] end
         lval = isfinite(lval) ? lval : -Inf
-        lock(L)
-        values[n] = lval
-        unlock(L)
+        V[I[n]] = lval
       elseif issum(n)
         # log-sum-exp trick to improve numerical stability (assumes weights are normalized)
         m = -Inf
         # get maximum incoming value
         for c in n.children
-          (values[c] > m) && (m = values[c])
+          u = V[I[c]]
+          (u > m) && (m = u)
         end
         lval = 0.0
         for (j, c) in enumerate(n.children)
           # ensure exp in only computed on nonpositive arguments (avoid overflow)
-          lval += exp(values[c] - m) * n.weights[j]
+          u = V[I[c]]
+          lval += exp(u - m) * n.weights[j]
         end
         # if something went wrong (e.g. incoming value is NaN or Inf) return -Inf, otherwise
         # return maximum plus lval (adding m ensures signficant digits are numerically precise)
         lval = isfinite(lval) ? m + log(lval) : -Inf
-        lock(L)
-        values[n] = lval
-        unlock(L)
+        V[I[n]] = lval
       else # is a leaf node
         lval = logpdf(n, x[n.scope])
-        lock(L)
-        values[n] = lval
-        unlock(L)
+        V[I[n]] = lval
       end
     end
   end
-  return values[first(first(nlayers))]
+  return V[I[first(first(nlayers))]]
+end
+@inline function plogpdf!(values::Dict{Node, Float64}, L::Vector{Vector{Node}}, x::AbstractVector{<:Real})::Float64
+  I, i = Dict{Node, Int}(), 1
+  for v ∈ L
+    for n ∈ v I[n] = i; i += 1 end
+  end
+  V = Vector{Float64}(undef, sum(length.(L)))
+  p = plogpdf!(I, V, L, x)
+  for v ∈ L for n ∈ v values[n] = V[I[n]] end end
+  return p
 end
 export plogpdf!
 
@@ -190,8 +196,22 @@ export plogpdf!
 
 Parallelized version of `logpdf(r, x)`. Set `JULIA_NUM_THREADS` > 1 to make this effective.
 """
-@inline plogpdf(r::Node, x::AbstractVector{<:Real})::Float64 = plogpdf!(Dict{Node, Float64}(), layers(r), x)
-@inline plogpdf(r::Node, X::AbstractMatrix{<:Real})::Float64 = sum(plogpdf(r, view(X, i, :)) for i ∈ 1:size(X, 1))
+@inline function plogpdf(r::Node, x::AbstractVector{<:Real})::Float64
+  I, L, i = Dict{Node, Int}(), layers(r), 1
+  for v ∈ L
+    for n ∈ v I[n] = i; i += 1 end
+  end
+  V = Vector{Float64}(undef, sum(length.(L)))
+  return plogpdf!(I, V, L, x)
+end
+@inline function plogpdf(r::Node, X::AbstractMatrix{<:Real})::Float64
+  I, L, i = Dict{Node, Int}(), layers(r), 1
+  for v ∈ L
+    for n ∈ v I[n] = i; i += 1 end
+  end
+  V = Vector{Float64}(undef, sum(length.(L)))
+  return sum(plogpdf!(I, V, L, view(X, i, :)) for i ∈ 1:size(X, 1))
+end
 export plogpdf
 
 """
@@ -308,8 +328,8 @@ Counts the number of induced circuits of the circuit rooted at `r`, caching inte
 """
 function ncircuits!(values::Dict{Node, Int}, r::Node)
   # traverse nodes in reverse topological order (bottom-up)
-  N = nodes(r)
-  for n ∈ Iterators.reverse(N)
+  N = nodes(r; rev = false)
+  for n ∈ N
     if isa(n, Product)
       values[n] = mapreduce(u -> values[u], *, n.children)
     elseif isa(n, Sum)

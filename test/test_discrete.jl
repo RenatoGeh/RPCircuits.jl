@@ -15,10 +15,10 @@
     @test length(scl) == 8
     @test (length(scl[N[1]]) == 2) && (1 in scl[N[1]]) && (2 in scl[N[1]])
     @test (length(scl[N[2]]) == 2) && (1 in scl[N[2]]) && (2 in scl[N[2]])
-    @test (length(scl[N[3]]) == 2) && (1 in scl[N[3]]) && (2 in scl[N[3]])
+    @test (length(scl[N[3]]) == 1) && (1 in scl[N[3]])
     @test (length(scl[N[4]]) == 2) && (1 in scl[N[4]]) && (2 in scl[N[4]])
-    @test (length(scl[N[5]]) == 1) && (1 in scl[N[5]])
-    @test (length(scl[N[6]]) == 1) && (2 in scl[N[6]])
+    @test (length(scl[N[5]]) == 1) && (2 in scl[N[5]])
+    @test (length(scl[N[6]]) == 2) && (1 in scl[N[6]]) && (2 in scl[N[6]])
     @test (length(scl[N[7]]) == 1) && (2 in scl[N[7]])
     @test (length(scl[N[8]]) == 1) && (1 in scl[N[8]])
   end
@@ -69,10 +69,10 @@ end # end of DAG circuit testset
     N = nodes(HMM)
     @test length(scl) == 15
     @test (length(scl[N[1]]) == 3) && (1 in scl[N[1]]) && (2 in scl[N[1]]) && (3 in scl[N[1]])
-    @test (length(scl[N[5]]) == 2) && (2 in scl[N[5]]) && (3 in scl[N[5]])
+    @test (length(scl[N[4]]) == 2) && (2 in scl[N[4]]) && (3 in scl[N[4]])
+    @test (length(scl[N[7]]) == 2) && (2 in scl[N[7]]) && (3 in scl[N[7]])
+    @test (length(scl[N[10]]) == 2) && (2 in scl[N[10]]) && (3 in scl[N[10]])
     @test (length(scl[N[6]]) == 2) && (2 in scl[N[6]]) && (3 in scl[N[6]])
-    @test (length(scl[N[8]]) == 2) && (2 in scl[N[8]]) && (3 in scl[N[8]])
-    @test (length(scl[N[9]]) == 2) && (2 in scl[N[9]]) && (3 in scl[N[9]])
   end
 
   results = [

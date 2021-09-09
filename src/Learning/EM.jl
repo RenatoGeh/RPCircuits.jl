@@ -67,7 +67,7 @@ function update(
   score = 0.0 # data loglikelihood
   sumnodes = sums(root_p)
   if learngaussians
-    gaussiannodes = nodes(root_p; f = Base.Fix2(isa, Gaussian))
+    gaussiannodes = nodes(root_p; f = Base.Fix2(isa, Gaussian), rev = false)
     if length(gaussiannodes) > 0
         means = Dict{Node, Float64}(n => 0.0 for n in gaussiannodes)
         squares = Dict{Node, Float64}(n => 0.0 for n in gaussiannodes)
@@ -83,7 +83,7 @@ function update(
   for t in 1:numrows
     datum = view(Data, t, :)
     #lv = logpdf!(values,circ,datum) # propagate input Data[i,:]
-    lv = plogpdf!(values, root_p, learner.layers, datum) # parallelized version
+    lv = plogpdf!(values, learner.layers, datum) # parallelized version
     @assert isfinite(lv) "logvalue of datum $t is not finite: $lv"
     score += lv
     #TODO: implement multithreaded version of backpropagate
@@ -136,7 +136,7 @@ function update(
     end
   end
   learner.previous = root_p
-  learner.circ = root_n
+  learner.root = root_n
   learner.layers, learner.layersp = learner.layersp, learner.layers
   learner.steps += 1
   learner.prevscore = learner.score
@@ -239,7 +239,7 @@ function update(
   # Compute theta1 = EM_Update(theta0)
   for t in 1:numrows
     datum = view(Data, t, :)
-    lv = plogpdf!(values, θ_0, learner.layers, datum) # parallelized version
+    lv = plogpdf!(values, learner.layers, datum) # parallelized version
     @assert isfinite(lv) "1. logvalue of datum $t is not finite: $lv"
     backpropagate!(diff, θ_0, values) # backpropagate derivatives
     Threads.@threads for n in sumnodes # update each node in parallel
@@ -289,7 +289,7 @@ function update(
   # Compute theta2 = EM_Update(theta1)
   for t in 1:numrows
     datum = view(Data, t, :)
-    lv = plogpdf!(values, θ_1, learner.layersp, datum) # parallelized version
+    lv = plogpdf!(values, learner.layersp, datum) # parallelized version
     @assert isfinite(lv) "2. logvalue of datum $t is not finite: $lv"
     backpropagate!(diff, θ_1, values) # backpropagate derivatives
     Threads.@threads for n in sumnodes # update each node in parallel
@@ -367,7 +367,7 @@ function update(
   score = 0.0 # data loglikelihood
   for t in 1:numrows
     datum = view(Data, t, :)
-    lv = plogpdf!(values, θ_1, learner.layersp, datum) # parallelized version
+    lv = plogpdf!(values, learner.layersp, datum) # parallelized version
     @assert isfinite(lv) "4. logvalue of datum $t is not finite: $lv"
     score += lv
     backpropagate!(diff, θ_1, values) # backpropagate derivatives

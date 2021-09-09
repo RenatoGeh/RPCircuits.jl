@@ -181,5 +181,6 @@ Returns the value at which the distribution is maximum
 
 Returns the scope of a leaf node
 """
-scope(n::Leaf) = n.scope
+@inline scope(n::Leaf) = n.scope
 export scope
+
