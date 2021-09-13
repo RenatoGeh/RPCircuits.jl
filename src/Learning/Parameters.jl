@@ -41,6 +41,32 @@ function backpropagate!(diff::Dict{Node, Float64}, r::Node, values::Dict{Node, F
   end
   return nothing
 end
+function backpropagate!(I::Dict{Node, Int}, diff::Vector{Float64}, circ::Vector{Node}, values::Vector{Float64})
+  fill!(diff, 0.0)
+  @inbounds diff[1] = 1.0
+  for i in 1:length(circ)
+    @inbounds node = circ[i]
+    if issum(node)
+      @inbounds d = diff[i]
+      @inbounds for (k, j) in enumerate(node.children)
+        diff[I[j]] += node.weights[k] * d
+      end
+    elseif isprod(node)
+      @inbounds d = diff[i]
+      @inbounds for j in node.children
+        k = I[j]
+        if isfinite(values[k])
+          # @assert isfinite(exp(values[i]-values[j]))  "contribution to derivative of ($i,$j) is not finite: $(values[i]), $(values[j]), $(exp(values[i]-values[j]))"
+          diff[k] += d * exp(values[i] - values[k])
+        else
+          δ = exp(sum(values[I[u]] for u in node.children if u ≠ j))
+          # @assert isfinite(δ)  "contribution to derivative of ($i,$j) is not finite: $(values[i]), $(values[j]), $(δ)"
+          diff[k] += d * δ
+        end
+      end
+    end
+  end
+end
 
 # compute log derivatives (not working!)
 function logbackpropagate!(r::Node, values::Vector{Float64}, diff::Vector{Float64})

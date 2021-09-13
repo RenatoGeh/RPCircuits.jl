@@ -6,12 +6,18 @@ Learn weights using the Expectation Maximization algorithm.
 """
 mutable struct SEM <: ParameterLearner
   root::Node
+  N_r::Vector{Node}
   layers::Vector{Vector{Node}}
+  sums_r::Vector{Sum}
   previous::Node # for performing temporary updates and applying momentum
+  N_p::Vector{Node}
   layersp::Vector{Vector{Node}}
+  sums_p::Vector{Sum}
   cmap::Dict{Node, Node} # mapping of each node in root to corresponding copy in previous
-  diff::Dict{Node, Float64} # to store derivatives
-  values::Dict{Node, Float64} # to store logprobabilities
+  imap::Dict{Node, Int} # mapping from node to vector index for root
+  jmap::Dict{Node, Int} # mapping from node to vector index for previous
+  diff::Vector{Float64} # to store derivatives
+  values::Vector{Float64} # to store logprobabilities
   score::Float64     # score (loglikelihood)
   prevscore::Float64 # for checking convergence
   tolerance::Float64 # tolerance for convergence criterion
@@ -19,7 +25,12 @@ mutable struct SEM <: ParameterLearner
   minimumvariance::Float64 # minimum variance for Gaussian leaves
   function SEM(r::Node)
     p, M = mapcopy(r; converse = true)
-    return new(r, layers(r), p, layers(p), M, Dict{Node, Float64}(), Dict{Node, Float64}(), NaN, NaN, 1e-4, 0, 0.5)
+    N_r, N_p = nodes(r), nodes(p)
+    n = length(N_r)
+    imap, jmap = Dict{Node, Int}(x => i for (i, x) ∈ enumerate(N_r)), Dict{Node, Int}(x => i for (i, x) ∈ enumerate(N_p))
+    sums_r, sums_p = filter(x -> isa(x, Sum), N_r), filter(x -> isa(x, Sum), N_p)
+    return new(r, N_r, layers(r), sums_r, p, N_p, layers(p), sums_p, M, imap, jmap,
+               Vector{Float64}(undef, n), Vector{Float64}(undef, n), NaN, NaN, 1e-4, 0, 0.5)
   end
 end
 export SEM
@@ -62,10 +73,11 @@ function update(
 
   root_p = learner.root # current parameters
   root_n = learner.previous # updated parameters
+  imap = learner.imap
   M = learner.cmap
   # # @assert numcols == circ._numvars "Number of columns should match number of variables in network."
   score = 0.0 # data loglikelihood
-  sumnodes = sums(root_p)
+  sumnodes = learner.sums_r
   if learngaussians
     gaussiannodes = nodes(root_p; f = Base.Fix2(isa, Gaussian), rev = false)
     if length(gaussiannodes) > 0
@@ -83,30 +95,33 @@ function update(
   for t in 1:numrows
     datum = view(Data, t, :)
     #lv = logpdf!(values,circ,datum) # propagate input Data[i,:]
-    lv = plogpdf!(values, learner.layers, datum) # parallelized version
+    lv = plogpdf!(imap, values, learner.layers, datum) # parallelized version
     @assert isfinite(lv) "logvalue of datum $t is not finite: $lv"
     score += lv
     #TODO: implement multithreaded version of backpropagate
-    backpropagate!(diff, root_p, values) # backpropagate derivatives
-    Threads.@threads for n in sumnodes # update each node in parallel
+    backpropagate!(imap, diff, learner.N_r, values) # backpropagate derivatives
+    Threads.@threads for l in 1:length(sumnodes) # update each node in parallel
+      n = sumnodes[l]
+      i = imap[n]
+      p = learner.sums_p[l]
       @inbounds for (j, c) in enumerate(n.children)
         # @assert isfinite(diff[i]) "derivative of node $i is not finite: $(diff[i])"
         # @assert !isnan(values[j]) "value of node $j is NaN: $(values[j])"
-        u = values[c]
+        u = values[imap[c]]
         if isfinite(u)
-          δ = n.weights[j] * diff[n] * exp(u - lv) # improvement
+          δ = n.weights[j] * diff[i] * exp(u - lv) # improvement
           # @assert isfinite(δ) "improvement to weight ($i,$j):$(circ_p[i].weights[k]) is not finite: $δ, $(diff[i]), $(values[j]), $(exp(values[j]-lv))"
           if !isfinite(δ) δ = 0.0 end
         else
           δ = 0.0
         end
-        p = M[n]
         p.weights[j] = ((t - 1) / t) * p.weights[j] + δ / t # running average for improved precision
       end
     end
     if learngaussians
       Threads.@threads for n in gaussiannodes
-        α = diff[n]*exp(values[n]-lv)
+        i = imap[n]
+        α = diff[i]*exp(values[i]-lv)
         u = datum[n.scope]
         denon[n] += α
         means[n] += α*u
@@ -117,8 +132,9 @@ function update(
   # Do update
   # TODO: implement momentum acceleration (nesterov acceleration, Adam, etc)
   # newweights =  log.(newweights) .+ maxweights
-  Threads.@threads for n in sumnodes
-    p = M[n]
+  Threads.@threads for i in 1:length(sumnodes)
+    n = sumnodes[i]
+    p = learner.sums_p[i]
     p.weights .+= smoothing / length(p.weights) # smoothing factor to prevent degenerate probabilities
     p.weights .*= learningrate / sum(p.weights) # normalize weights
     # online update: θ[t+1] = (1-η)*θ[t] + η*update(θ[t])
@@ -138,6 +154,9 @@ function update(
   learner.previous = root_p
   learner.root = root_n
   learner.layers, learner.layersp = learner.layersp, learner.layers
+  learner.sums_r, learner.sums_p = learner.sums_p, learner.sums_r
+  learner.imap, learner.jmap = learner.jmap, learner.imap
+  learner.N_r, learner.N_p = learner.N_p, learner.N_r
   learner.steps += 1
   learner.prevscore = learner.score
   learner.score = -score / numrows
