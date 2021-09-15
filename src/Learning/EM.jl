@@ -5,32 +5,14 @@
 Learn weights using the Expectation Maximization algorithm.
 """
 mutable struct SEM <: ParameterLearner
-  root::Node
-  N_r::Vector{Node}
-  layers::Vector{Vector{Node}}
-  sums_r::Vector{Sum}
-  previous::Node # for performing temporary updates and applying momentum
-  N_p::Vector{Node}
-  layersp::Vector{Vector{Node}}
-  sums_p::Vector{Sum}
-  cmap::Dict{Node, Node} # mapping of each node in root to corresponding copy in previous
-  imap::Dict{Node, Int} # mapping from node to vector index for root
-  jmap::Dict{Node, Int} # mapping from node to vector index for previous
-  diff::Vector{Float64} # to store derivatives
-  values::Vector{Float64} # to store logprobabilities
+  circ::CCircuit
   score::Float64     # score (loglikelihood)
   prevscore::Float64 # for checking convergence
   tolerance::Float64 # tolerance for convergence criterion
   steps::Integer   # number of learning steps (epochs)
   minimumvariance::Float64 # minimum variance for Gaussian leaves
   function SEM(r::Node)
-    p, M = mapcopy(r; converse = true)
-    N_r, N_p = nodes(r), nodes(p)
-    n = length(N_r)
-    imap, jmap = Dict{Node, Int}(x => i for (i, x) ∈ enumerate(N_r)), Dict{Node, Int}(x => i for (i, x) ∈ enumerate(N_p))
-    sums_r, sums_p = filter(x -> isa(x, Sum), N_r), filter(x -> isa(x, Sum), N_p)
-    return new(r, N_r, layers(r), sums_r, p, N_p, layers(p), sums_p, M, imap, jmap,
-               Vector{Float64}(undef, n), Vector{Float64}(undef, n), NaN, NaN, 1e-4, 0, 0.5)
+    return new(compile(CCircuit, r), NaN, NaN, 1e-4, 0, 0.5)
   end
 end
 export SEM
@@ -71,43 +53,41 @@ function update(
 
   numrows, numcols = size(Data)
 
-  root_p = learner.root # current parameters
-  root_n = learner.previous # updated parameters
-  imap = learner.imap
-  M = learner.cmap
-  # # @assert numcols == circ._numvars "Number of columns should match number of variables in network."
-  score = 0.0 # data loglikelihood
-  sumnodes = learner.sums_r
+  curr = learner.circ.C
+  prev = learner.circ.P
+  score = 0.0
+  sumnodes = learner.circ.S
   if learngaussians
-    gaussiannodes = nodes(root_p; f = Base.Fix2(isa, Gaussian), rev = false)
+    gaussiannodes = [i for (i, x) in enumerate(curr) if isa(x, Gaussian)]
     if length(gaussiannodes) > 0
-        means = Dict{Node, Float64}(n => 0.0 for n in gaussiannodes)
-        squares = Dict{Node, Float64}(n => 0.0 for n in gaussiannodes)
-        denon = Dict{Node, Float64}(n => 0.0 for n in gaussiannodes)
+        means = Dict{UInt, Float64}(n => 0.0 for n in gaussiannodes)
+        squares = Dict{UInt, Float64}(n => 0.0 for n in gaussiannodes)
+        denon = Dict{UInt, Float64}(n => 0.0 for n in gaussiannodes)
     end
   end
-  #diff = zeros(Float64, length(circ))
-  diff = learner.diff
-  values = learner.values
-  #values = similar(diff)
+  diff = learner.circ.D
+  values = learner.circ.V
+
   # TODO beter exploit multithreading
   # Compute expected weights
   for t in 1:numrows
     datum = view(Data, t, :)
     #lv = logpdf!(values,circ,datum) # propagate input Data[i,:]
-    lv = plogpdf!(imap, values, learner.layers, datum) # parallelized version
+    lv = cplogpdf!(values, curr, learner.circ.L, datum) # parallelized version
     @assert isfinite(lv) "logvalue of datum $t is not finite: $lv"
     score += lv
     #TODO: implement multithreaded version of backpropagate
-    backpropagate!(imap, diff, learner.N_r, values) # backpropagate derivatives
+    # backpropagate!(diff, curr, values) # backpropagate derivatives
+    # If tree, parallelize by layers
+    backpropagate_tree!(diff, curr, learner.circ.L, values)
     Threads.@threads for l in 1:length(sumnodes) # update each node in parallel
-      n = sumnodes[l]
-      i = imap[n]
-      p = learner.sums_p[l]
+      i = sumnodes[l]
+      n = curr[i]
+      p = prev[i]
       @inbounds for (j, c) in enumerate(n.children)
         # @assert isfinite(diff[i]) "derivative of node $i is not finite: $(diff[i])"
         # @assert !isnan(values[j]) "value of node $j is NaN: $(values[j])"
-        u = values[imap[c]]
+        u = values[c]
         if isfinite(u)
           δ = n.weights[j] * diff[i] * exp(u - lv) # improvement
           # @assert isfinite(δ) "improvement to weight ($i,$j):$(circ_p[i].weights[k]) is not finite: $δ, $(diff[i]), $(values[j]), $(exp(values[j]-lv))"
@@ -120,9 +100,8 @@ function update(
     end
     if learngaussians
       Threads.@threads for n in gaussiannodes
-        i = imap[n]
-        α = diff[i]*exp(values[i]-lv)
-        u = datum[n.scope]
+        α = diff[n]*exp(values[n]-lv)
+        u = datum[curr[n].scope]
         denon[n] += α
         means[n] += α*u
         squares[n] += α*u*u
@@ -133,8 +112,9 @@ function update(
   # TODO: implement momentum acceleration (nesterov acceleration, Adam, etc)
   # newweights =  log.(newweights) .+ maxweights
   Threads.@threads for i in 1:length(sumnodes)
-    n = sumnodes[i]
-    p = learner.sums_p[i]
+    j = sumnodes[i]
+    n = curr[j]
+    p = prev[j]
     p.weights .+= smoothing / length(p.weights) # smoothing factor to prevent degenerate probabilities
     p.weights .*= learningrate / sum(p.weights) # normalize weights
     # online update: θ[t+1] = (1-η)*θ[t] + η*update(θ[t])
@@ -144,19 +124,14 @@ function update(
   end
   if learngaussians
     Threads.@threads for n in gaussiannodes
-      p = M[n]
+      p = prev[n]
       # online update: θ[t+1] = (1-η)*θ[t] + η*update(θ[t])
       @inbounds p.mean = learningrate*means[n]/denon[n] + (1-learningrate)*n.mean
       @inbounds p.variance = learningrate*(squares[n]/denon[n] - (p.mean)^2) + (1-learningrate)*n.variance
       if p.variance < minimumvariance p.variance = minimumvariance end
     end
   end
-  learner.previous = root_p
-  learner.root = root_n
-  learner.layers, learner.layersp = learner.layersp, learner.layers
-  learner.sums_r, learner.sums_p = learner.sums_p, learner.sums_r
-  learner.imap, learner.jmap = learner.jmap, learner.imap
-  learner.N_r, learner.N_p = learner.N_p, learner.N_r
+  swap!(learner.circ)
   learner.steps += 1
   learner.prevscore = learner.score
   learner.score = -score / numrows

@@ -10,62 +10,86 @@ abstract type ParameterLearner end
 
 Computes derivatives for values propagated in log domain and stores results in given vector diff.
 """
-function backpropagate!(diff::Dict{Node, Float64}, r::Node, values::Dict{Node, Float64})
+function backpropagate!(diff::Dict{Node, Float64}, C::Vector{Node}, values::Dict{Node, Float64})
   # Assumes network has been evaluted at some assignment using logpdf!
   # Backpropagate derivatives
-  V = Set{Node}()
-  Q = Node[r]
-  diff[r] = 1.0
-  while !isempty(Q)
-    n = popfirst!(Q)
+  for i ∈ length(C):-1:1
+    n = C[i]
     if issum(n)
       for (j, c) in enumerate(n.children)
         !haskey(diff, c) && (diff[c] = 0)
         diff[c] += n.weights[j] * diff[n]
-        if c ∉ V push!(V, c); push!(Q, c) end
       end
     elseif isprod(n)
-      for (j, c) in enumerate(n.children)
+      for c in n.children
         !haskey(diff, c) && (diff[c] = 0)
         if isfinite(values[c])
           # @assert isfinite(exp(values[i]-values[j]))  "contribution to derivative of ($i,$j) is not finite: $(values[i]), $(values[j]), $(exp(values[i]-values[j]))"
           diff[c] += diff[n] * exp(values[n] - values[c])
         else
-          δ = exp(sum(values[k] for k in n.children if k ≠ j))
+          δ = exp(sum(values[k] for k in n.children if k ≠ c))
           # @assert isfinite(δ)  "contribution to derivative of ($i,$j) is not finite: $(values[i]), $(values[j]), $(δ)"
           diff[c] += diff[n] * δ
         end
-        if c ∉ V push!(V, c); push!(Q, c) end
       end
     end
   end
   return nothing
 end
-function backpropagate!(I::Dict{Node, Int}, diff::Vector{Float64}, circ::Vector{Node}, values::Vector{Float64})
+function backpropagate!(diff::Vector{Float64}, circ::Vector{Node}, values::Vector{Float64})
   fill!(diff, 0.0)
-  @inbounds diff[1] = 1.0
-  for i in 1:length(circ)
+  @inbounds diff[end] = 1.0
+  for i in length(circ):-1:1
     @inbounds node = circ[i]
     if issum(node)
       @inbounds d = diff[i]
-      @inbounds for (k, j) in enumerate(node.children)
-        diff[I[j]] += node.weights[k] * d
+      @inbounds for (j, c) in enumerate(node.children)
+        diff[c] += node.weights[j] * d
       end
     elseif isprod(node)
       @inbounds d = diff[i]
       @inbounds for j in node.children
-        k = I[j]
-        if isfinite(values[k])
+        if isfinite(values[j])
           # @assert isfinite(exp(values[i]-values[j]))  "contribution to derivative of ($i,$j) is not finite: $(values[i]), $(values[j]), $(exp(values[i]-values[j]))"
-          diff[k] += d * exp(values[i] - values[k])
+          diff[j] += d * exp(values[i] - values[j])
         else
-          δ = exp(sum(values[I[u]] for u in node.children if u ≠ j))
+          δ = exp(sum(values[u] for u in node.children if u ≠ j))
           # @assert isfinite(δ)  "contribution to derivative of ($i,$j) is not finite: $(values[i]), $(values[j]), $(δ)"
-          diff[k] += d * δ
+          diff[j] += d * δ
         end
       end
     end
   end
+  return nothing
+end
+
+function backpropagate_tree!(diff::Vector{Float64}, circ::Vector{Node}, layers::Vector{Vector{UInt}}, values::Vector{Float64})
+  fill!(diff, 0.0)
+  @inbounds diff[end] = 1.0
+  for l in 1:length(layers)
+    Threads.@threads for i ∈ layers[l]
+      @inbounds node = circ[i]
+      if issum(node)
+        @inbounds d = diff[i]
+        @inbounds for (j, c) in enumerate(node.children)
+          diff[c] += node.weights[j] * d
+        end
+      elseif isprod(node)
+        @inbounds d = diff[i]
+        @inbounds for j in node.children
+          if isfinite(values[j])
+            # @assert isfinite(exp(values[i]-values[j]))  "contribution to derivative of ($i,$j) is not finite: $(values[i]), $(values[j]), $(exp(values[i]-values[j]))"
+            diff[j] += d * exp(values[i] - values[j])
+          else
+            δ = exp(sum(values[u] for u in node.children if u ≠ j))
+            # @assert isfinite(δ)  "contribution to derivative of ($i,$j) is not finite: $(values[i]), $(values[j]), $(δ)"
+            diff[j] += d * δ
+          end
+        end
+      end
+    end
+  end
+  return nothing
 end
 
 # compute log derivatives (not working!)

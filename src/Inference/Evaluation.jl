@@ -126,6 +126,45 @@ logpdf(S, [NaN, 2])
 """
 logpdf(r::Node, x::AbstractVector{<:Real})::Float64 = logpdf!(Dict{Node, Float64}(), nodes(r; rev = false), x)
 
+function cplogpdf!(
+    V::Vector{Float64},
+    N::Vector{Node},
+    nlayers::Vector{Vector{UInt}},
+    x::AbstractVector{<:Real},
+)::Float64
+  # visit layers from last (leaves) to first (root)
+  @inbounds for l in length(nlayers):-1:1
+    # parallelize computations within layer
+    Threads.@threads for i in nlayers[l]
+      n = N[i]
+      if isprod(n)
+        lval = 0.0
+        for c in n.children lval += V[c] end
+        V[i] = isfinite(lval) ? lval : -Inf
+      elseif issum(n)
+        # log-sum-exp trick to improve numerical stability (assumes weights are normalized)
+        m = -Inf
+        # get maximum incoming value
+        for c in n.children
+          u = V[c]
+          (u > m) && (m = u)
+        end
+        lval = 0.0
+        for (j, c) in enumerate(n.children)
+          # ensure exp in only computed on nonpositive arguments (avoid overflow)
+          lval += exp(V[c] - m) * n.weights[j]
+        end
+        # if something went wrong (e.g. incoming value is NaN or Inf) return -Inf, otherwise
+        # return maximum plus lval (adding m ensures signficant digits are numerically precise)
+        V[i] = isfinite(lval) ? m + log(lval) : -Inf
+      else # is a leaf node
+        V[i] = logpdf(n, x[n.scope])
+      end
+    end
+  end
+  return V[first(first(nlayers))]
+end
+
 """
     plogpdf!(values::Dict{Node, Float64}, nlayers::Vector{Vector{Node}}, x::AbstractVector{<:Real})::Float64
 
@@ -179,6 +218,7 @@ function plogpdf!(
   end
   return V[I[first(first(nlayers))]]
 end
+
 @inline function plogpdf!(values::Dict{Node, Float64}, L::Vector{Vector{Node}}, x::AbstractVector{<:Real})::Float64
   I, i = Dict{Node, Int}(), 1
   for v ∈ L

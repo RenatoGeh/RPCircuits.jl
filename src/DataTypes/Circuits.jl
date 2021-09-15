@@ -35,6 +35,29 @@ function layers(r::Node)::Vector{Vector{Node}}
 end
 export layers
 
+"""Layers but recording indices and not nodes."""
+function ilayers(c::Vector{Node})::Vector{Vector{UInt}}
+  m = length(c)
+  layer = Dict{Node, Int}(n => 0 for n ∈ c)
+  if isleaf(c[end]) layer[c[1]] = 1
+  else layer[c[end]] = 1 end
+  for i in 1:m
+    n = c[i]
+    if !isleaf(n)
+      for j in n.children
+        layer[j] = max(layer[j], layer[n] + 1)
+      end
+    end
+  end
+  nlayers = maximum(values(layer))
+  thelayers = Vector()
+  @inbounds for l in 1:nlayers
+    thislayer = filter(i -> (layer[c[i]] == l), 1:m)
+    push!(thelayers, thislayer)
+  end
+  return thelayers
+end
+
 """
     nodes(r::Node; f::Union{Nothing, Function} = nothing)::Vector{Node}
 
