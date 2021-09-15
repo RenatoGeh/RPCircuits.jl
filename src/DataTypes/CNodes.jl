@@ -7,6 +7,13 @@ struct CProduct <: Inner
   children::Vector{UInt}
 end
 
+struct GStore
+  G::Vector{UInt}
+  μ::Dict{UInt, Float64}
+  squares::Dict{UInt, Float64}
+  denon::Dict{UInt, Float64}
+end
+
 mutable struct CCircuit
   C::Vector{Node} # current
   P::Vector{Node} # previous
@@ -14,6 +21,7 @@ mutable struct CCircuit
   D::Vector{Float64} # derivatives
   L::Vector{Vector{UInt}} # layers
   S::Vector{UInt} # sums
+  gauss::Union{Nothing, GStore} # gaussians
 end
 
 @inline issum(n::CSum)::Bool = true
@@ -24,7 +32,7 @@ end
   return nothing
 end
 
-function compile(::Type{CCircuit}, r::Node)::CCircuit
+function compile(::Type{CCircuit}, r::Node; gauss::Bool = false)::CCircuit
   N = nodes(r; rev = false)
   oL = layers(r)
   n = length(N)
@@ -55,5 +63,13 @@ function compile(::Type{CCircuit}, r::Node)::CCircuit
     L[i] = l
   end
   V, D = zeros(n), zeros(n)
-  return CCircuit(C, P, V, D, L, [i for (i, x) ∈ enumerate(C) if isa(x, CSum)])
+  gs = nothing
+  if gauss
+    G = [i for (i, x) ∈ enumerate(C) if isa(x, Gaussian)]
+    μ = Dict{UInt, Float64}(n => 0.0 for n ∈ G)
+    squares = Dict{UInt, Float64}(n => 0.0 for n ∈ G)
+    denon = Dict{UInt, Float64}(n => 0.0 for n ∈ G)
+    gs = GStore(G, μ, squares, denon)
+  end
+  return CCircuit(C, P, V, D, L, [i for (i, x) ∈ enumerate(C) if isa(x, CSum)], gs)
 end

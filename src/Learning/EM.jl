@@ -48,7 +48,8 @@ function update(
   learningrate::Float64 = 1.0,
   smoothing::Float64 = 1e-4,
   learngaussians::Bool = false,
-  minimumvariance::Float64 = learner.minimumvariance
+  minimumvariance::Float64 = learner.minimumvariance;
+  verbose::Bool = false
 )
 
   numrows, numcols = size(Data)
@@ -58,11 +59,13 @@ function update(
   score = 0.0
   sumnodes = learner.circ.S
   if learngaussians
-    gaussiannodes = [i for (i, x) in enumerate(curr) if isa(x, Gaussian)]
+    gs = learner.circ.gauss
+    gaussiannodes = gs.G
     if length(gaussiannodes) > 0
-        means = Dict{UInt, Float64}(n => 0.0 for n in gaussiannodes)
-        squares = Dict{UInt, Float64}(n => 0.0 for n in gaussiannodes)
-        denon = Dict{UInt, Float64}(n => 0.0 for n in gaussiannodes)
+        means = gs.μ
+        squares = gs.squares
+        denon = gs.denon
+        foreach(x -> (means[x] = 0.0; squares[x] = 0.0; denon[x] = 0.0), gaussiannodes)
     end
   end
   diff = learner.circ.D
@@ -131,10 +134,16 @@ function update(
       if p.variance < minimumvariance p.variance = minimumvariance end
     end
   end
+
+  if verbose && (learner.steps % 2 == 0)
+    println("Iteration $(learner.steps). η: $(learningrate), NLL: $(pNLL(values, curr, learner.circ.L, Data))")
+  end
+
   swap!(learner.circ)
   learner.steps += 1
   learner.prevscore = learner.score
   learner.score = -score / numrows
+
   return learner.prevscore - learner.score
 end
 export update

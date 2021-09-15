@@ -387,6 +387,12 @@ end
 Computes the average negative loglikelihood of a dataset `data` assigned by circ.
 """
 NLL(r::Node, data::AbstractMatrix{<:Real}) = -logpdf(r, data) / size(data, 1)
+"""Computes the NLL by parallelizing the circuit instead of instances."""
+@inline function pNLL(V::Vector{Float64}, N::Vector{Node}, L::Vector{Vector{UInt}}, D::AbstractMatrix{<:Real})::Float64
+  n = size(D, 1)
+  return -sum(cplogpdf!(V, N, L, view(D, i, :)) for i in 1:n)/n
+end
+
 export NLL
 
 """
