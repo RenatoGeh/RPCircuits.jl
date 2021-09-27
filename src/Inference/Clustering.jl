@@ -1,11 +1,15 @@
-function memStep(circ::CCircuit, nvars::Int, x::AbstractVector{<:Real})::Tuple{Vector{Float64}, Vector{Float64}}
-	N = circ.C
-	nlayers = circ.L
-	V = Vector{Tuple{Vector{Float64}, Vector{Float64}}}(undef, length(N))
-	@inbounds for l in length(nlayers):-1:1
-		Threads.@threads for i in nlayers[l]
-			n = N[i]
-			if isprod(n)
+function memStep(
+  circ::CCircuit,
+  nvars::Int,
+  x::AbstractVector{<:Real},
+)::Tuple{Vector{Float64}, Vector{Float64}}
+  N = circ.C
+  nlayers = circ.L
+  V = Vector{Tuple{Vector{Float64}, Vector{Float64}}}(undef, length(N))
+  @inbounds for l in length(nlayers):-1:1
+    Threads.@threads for i in nlayers[l]
+      n = N[i]
+      if isprod(n)
         nums = zeros(nvars)
         dems = zeros(nvars)
         for c in n.children
@@ -14,7 +18,7 @@ function memStep(circ::CCircuit, nvars::Int, x::AbstractVector{<:Real})::Tuple{V
           dems += dd
         end
         V[i] = (nums, dems)
-			elseif issum(n)
+      elseif issum(n)
         nums_children = zeros(Float64, nvars, length(n.children))
         dems_children = zeros(Float64, nvars, length(n.children))
         for (j, c) in enumerate(n.children)
@@ -33,7 +37,7 @@ function memStep(circ::CCircuit, nvars::Int, x::AbstractVector{<:Real})::Tuple{V
           dems[k] = logsumexp(dems_children[k, :])
         end
         V[i] = (nums, dems)
-			else
+      else
         @assert n isa Gaussian
         lval = logpdf(n, x[n.scope])
         nums = fill(lval, nvars)
@@ -42,10 +46,10 @@ function memStep(circ::CCircuit, nvars::Int, x::AbstractVector{<:Real})::Tuple{V
         nums[n.scope] += log(n.mean) - 2 * log(stdev)
         dems[n.scope] -= 2 * log(stdev)
         V[i] = (nums, dems)
-			end
-		end
-	end
-	return V[first(first(nlayers))]
+      end
+    end
+  end
+  return V[first(first(nlayers))]
 end
 
 """
@@ -53,12 +57,13 @@ Performs Modal EM in PC starting from point `x_0`. Returns the convergence
 point after `max_iterations` iterations.
 
 Constraints:
-- Only works with Gaussian circuits.
-- Gaussian means must be positive.
+
+  - Only works with Gaussian circuits.
+  - Gaussian means must be positive.
 """
 function modalEM(
-	root::Node,
-	x_0::AbstractVector{<:Real},
+  root::Node,
+  x_0::AbstractVector{<:Real},
   max_iterations::Int = 16,
 )::AbstractVector{<:Real}
   circ = compile(CCircuit, root)
@@ -76,7 +81,7 @@ Simple logsumexp.
 
 Source: https://github.com/probcomp/LogSumExp.jl/blob/main/src/LogSumExp.jl
 """
-function logsumexp(a::AbstractArray{<:Real}; dims::Union{Integer, Dims, Colon}=:)
-  m = maximum(a; dims=dims)
-  return m + log.(sum(exp.(a .- m); dims=dims))
+function logsumexp(a::AbstractArray{<:Real}; dims::Union{Integer, Dims, Colon} = :)
+  m = maximum(a; dims = dims)
+  return m + log.(sum(exp.(a .- m); dims = dims))
 end
