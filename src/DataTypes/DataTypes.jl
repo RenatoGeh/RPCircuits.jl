@@ -1,4 +1,5 @@
 include("Nodes.jl")
 include("Circuits.jl")
 include("CNodes.jl")
+include("RPPTree.jl")
 #include("Vtree.jl")

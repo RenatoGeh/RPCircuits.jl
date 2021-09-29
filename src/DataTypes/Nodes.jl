@@ -55,16 +55,6 @@ end
 @inline Base.copy(i::Indicator)::Indicator = Indicator(i.scope, i.value)
 
 """
-Projection Node.
-"""
-struct Projection <: Inner
-  pos::UInt
-  neg::UInt
-  λ::Float64
-  hyperplane::Function
-end
-
-"""
 Univariate Categorical Distribution Node
 """
 struct Categorical <: Leaf
@@ -115,12 +105,6 @@ Is this an inner node?
 export isinner
 
 """
-Is this a projection node?
-"""
-@inline isproj(n::Node) = isa(n, Projection)
-export isproj
-
-"""
 Is this a leaf node?
 """
 @inline isleaf(n::Node) = isa(n, Leaf)
@@ -151,7 +135,6 @@ Evaluates leaf `node` at the given `value` in log domain.
 @inline logpdf(n::Categorical, value::Float64) = isnan(value) ? 0.0 : logpdf(n, Int(value))
 @inline logpdf(n::Gaussian, value::Float64)::Float64 =
   isnan(value) ? 0.0 : (-(value - n.mean)^2 / (2 * n.variance)) - log(2 * π * n.variance) / 2
-@inline logpdf(n::Projection, value::AbstractVector{<:Real}) = n.hyperplane(value) == n.value ? 0.0 : -Inf
 @inline logpdf(n::Bernoulli, value::Integer) = value == 1 ? log(n.p) : log(1-n.p)
 @inline logpdf(n::Bernoulli, value::Float64) = isnan(value) ? 0.0 : logpdf(n, Int(value))
 export logpdf

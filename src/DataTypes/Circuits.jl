@@ -88,7 +88,7 @@ function Base.foreach(f::Function, r::Node; rev::Bool = true)
     if n ∈ V return end
     push!(V, n)
     i += 1
-    if isinner(n) for c ∈ n.children passdown(c) end end
+    if isinner(n) for c ∈ children(n) passdown(c) end end
     if rev push!(N, n)
     else f(i, n) end
     return nothing
@@ -96,6 +96,20 @@ function Base.foreach(f::Function, r::Node; rev::Bool = true)
   passdown(r)
   rev && foreach(f, enumerate(Iterators.reverse(N)))
   return nothing
+end
+
+function Base.collect(r::Node; rev::Bool = true)::Vector{Node}
+  N = Vector{Node}()
+  V = Set{Node}()
+  function passdown(n::Node)
+    if n ∈ V return end
+    push!(V, n)
+    if isinner(n) for c ∈ children(n) passdown(c) end end
+    push!(N, n)
+    return nothing
+  end
+  passdown(r)
+  return rev ? reverse!(N) : N
 end
 
 """

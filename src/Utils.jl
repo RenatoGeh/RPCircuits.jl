@@ -127,3 +127,14 @@ function mapcopy(r::Node; converse::Bool = false)::Tuple{Node, Dict{Node, Node}}
   M[z] = r
   return z, M
 end
+
+"""Computes, inplace, the Hadamard product: A∘B=C, where C_ij = A_ij*B_ij."""
+function hadamard!(A::AbstractMatrix{<:Real}, B::AbstractMatrix{<:Real})
+  n, m = size(A)
+  for j ∈ 1:m
+    @simd for i ∈ 1:n
+      @inbounds A[i,j] *= B[i,j]
+    end
+  end
+  return nothing
+end

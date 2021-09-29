@@ -3,7 +3,7 @@ using LogicCircuits: Vtree, variables
 function learn_structured(S::Matrix{<:Real}; n_projs::Int = 3, max_height::Int = -1,
     min_examples::Int = 30, binarize::Bool = false, t_proj::Symbol = :max, trials::Int = 5,
     dense_leaves::Bool = false, r::Real = 2.0, c::Real = 1.0, split_t::Symbol = :random,
-    vtree::Union{Vtree, Nothing} = nothing, residuals::Bool = false, n_comps::Int = 0, p_res::Real = 0.25)::Circuit
+    vtree::Union{Vtree, Nothing} = nothing, residuals::Bool = false, n_comps::Int = 0, p_res::Real = 0.25)::Node
   m = size(S, 1)
   if max_height < 0 max_height = floor(Int, sqrt(m)) end
   D = DataFrame(S, :auto)
