@@ -1,28 +1,34 @@
 using LogicCircuits: Vtree, PlainVtreeLeafNode, variable, variables
+import LogicCircuits
+using ProbabilisticCircuits: learn_vtree
 using LinearAlgebra
+using ThreadPools
+using Distributions: Dirichlet
 
 BLAS.set_num_threads(Threads.nthreads())
 
 @inline isleaf(v::Vtree)::Bool = isa(v, PlainVtreeLeafNode)
 
-function learn_rpp!(S::SubArray{<:Real, 2}, V::Vtree, f::Function, pa_id::Int,
-    P::Vector{Projection}, bin::Bool, min_examples::Int)::Node
+function learn_rpp!(S::SubArray{<:Real, 2}, V::Vtree, f::Function, pa_id::Int, height::Int,
+    P::Vector{Projection}, bin::Bool, min_examples::Int, max_height::Int,
+    I::Vector{Tuple{Indicator, Indicator}})::Node
   n, m = size(S)
   # Single variable. Return univariate distribution.
   if isleaf(V)
     u = variable(V)
-    Z = view(S, :, u)
+    Z = reshape(S, :)#view(S, :, u)
     if bin
       w = sum(Z)/n
-      return Sum([Indicator(u, 0), Indicator(u, 1)], [1.0-w, w])
+      ⊥, ⊤ = I[u]
+      return Sum([⊥, ⊤], [1.0-w, w])
     end
     μ = mean(Z)
     s = std(Z; mean = μ)
     # This deals with NaNs, Infs and 0.
     if !(s > 0.2) s = 0.04 else s *= s end
     return Gaussian(u, μ, s)
-  # Small dataset. Return fully factorized circuit.
-  elseif n < min_examples
+  # Small dataset or max height. Return fully factorized circuit.
+  elseif (n < min_examples) || (height > max_height)
     @label ff
     ch = Vector{Node}(undef, m)
     U = S.indices[2]
@@ -30,7 +36,8 @@ function learn_rpp!(S::SubArray{<:Real, 2}, V::Vtree, f::Function, pa_id::Int,
       W = sum(S; dims = 1) / n
       for i ∈ 1:m
         u, w = U[i], W[i]
-        ch[i] = Sum([Indicator(u, 0), Indicator(u, 1)], [1.0-w, w])
+        ⊥, ⊤ = I[u]
+        ch[i] = Sum([⊥, ⊤], [1.0-w, w])
       end
     else
       μ = mean(S; dims = 1)
@@ -54,25 +61,26 @@ function learn_rpp!(S::SubArray{<:Real, 2}, V::Vtree, f::Function, pa_id::Int,
   # IDs are the indeces of the parent projections.
   id = length(P)
   # Scopes for subs and primes.
-  # Sc_sub, Sc_prime = variables(V.left), variables(V.right)
-  # U = S.indices[2]
-  # I, J = findall(∈(Sc_sub), U), findall(∈(Sc_prime), U)
+  Sc_sub, Sc_prime = variables(V.left), variables(V.right)
+  U = S.indices[2]
+  X, Y = findall(∈(Sc_sub), U), findall(∈(Sc_prime), U)
   # Negatives, each on the subs and primes.
-  neg = Product([learn_rpp!(A#=view(A, :, I)=#, V.left, f, id, P, bin, min_examples),
-                 learn_rpp!(A#=view(A, :, J)=#, V.right, f, id, P, bin, min_examples)])
+  neg = Product([learn_rpp!(view(A, :, X), V.left, f, id, height + 1, P, bin, min_examples, max_height, I),
+                 learn_rpp!(view(A, :, Y), V.right, f, id, height + 1, P, bin, min_examples, max_height, I)])
   # Positives, each on the subs and primes.
-  pos = Product([learn_rpp!(B#=view(B, :, I)=#, V.left, f, id, P, bin, min_examples),
-                 learn_rpp!(B#=view(B, :, J)=#, V.right, f, id, P, bin, min_examples)])
+  pos = Product([learn_rpp!(view(B, :, X), V.left, f, id, height + 1, P, bin, min_examples, max_height, I),
+                 learn_rpp!(view(B, :, Y), V.right, f, id, height + 1, P, bin, min_examples, max_height, I)])
   # Finally, return the resulting sum node, with same weights as the ones given to the projection.
   return Sum([neg, pos], w)
 end
 
 """Learns a PC by projections and returns the root and a vector with all projections."""
 function learn_rpp(D::Matrix{<:Real}, V::Vtree; split::Symbol = :max, c::Real = 1.0, r::Real = 2.0,
-    trials::Int = 5, bin::Bool = true, min_examples::Int = 30)::Tuple{Node, Vector{Projection}}
+    trials::Int = 10, bin::Bool = true, min_examples::Int = 30, max_height::Int = 10,
+    I::Vector{Tuple{Indicator, Indicator}} = bin ? [(Indicator(u, 0), Indicator(u, 1)) for u ∈ 1:size(D, 2)] : Tuple{Indicator, Indicator}[])::Tuple{Node, Vector{Projection}}
   f = split == :max ? (x -> max_rulep(x, r, trials)) : (x -> sid_rulep(x, c, trials))
   P = Vector{Projection}()
-  r = learn_rpp!(view(D, :, :), V, f, -1, P, bin, min_examples)
+  r = learn_rpp!(view(D, :, :), V, f, -1, 1, P, bin, min_examples, max_height, I)
   return r, P
 end
 export learn_rpp
@@ -159,3 +167,241 @@ function compute!(P::Vector{Projection}, D::Matrix{<:Real};
   return nothing
 end
 export compute!
+
+function prune!(r::Node, D::AbstractMatrix{<:Real}, n::Int; em_steps::Integer = 30,
+    decay::Real = 0.975, batch::Integer = 500, validation::AbstractMatrix{<:Real} = D)
+  L = SEM(r)
+  I = shuffle!(collect(1:size(D, 1)))
+  m = length(I)
+  η = decay
+  while L.steps < em_steps
+    sid = rand(1:(m-batch))
+    B = view(D, I[sid:(sid+batch-1)], :)
+    update(L, B, η; verbose, validation)
+    η *= decay
+  end
+  # TODO
+  return nothing
+end
+
+function mini_em(C::Node, D::AbstractMatrix{<:Real}; steps::Integer = 10, decay::Real = 0.975,
+    batch_size::Integer = 500, validation::AbstractMatrix{<:Real} = D)::Float64
+  n = size(D, 1)
+  L = SEM(C)
+  indices = shuffle!(collect(1:n))
+  η = decay
+  while L.steps < steps
+    sid = rand(1:(length(indices)-batch_size))
+    batch = view(D, indices[sid:(sid+batch_size-1)], :)
+    η *= decay
+    update(L, batch, η; verbose = true, validation)
+  end
+  return pNLL(L.circ.V, L.circ.C, L.circ.L, validation)
+end
+
+function ensemble(D::AbstractMatrix{<:Real}, k::Integer; em_steps::Integer = 10, batch_size::Integer = 500,
+    max_diff::Real = 0.1, bin::Bool = true, decay::Real = 0.975, validation::AbstractMatrix{<:Real} = D,
+    strategy::Symbol = :em, kwargs...)::Node
+  n, m = size(D)
+  i = 1
+  K = Vector{Node}(undef, k)
+  LL = Vector{Float64}(undef, k)
+  I = bin ? [(Indicator(u, 0), Indicator(u, 1)) for u ∈ 1:m] : Tuple{Indicator, Indicator}[]
+  println("Learning initial components...")
+  D_df = DataFrame(D, :auto)
+  best = Threads.Atomic{Float64}(Inf)
+  threshold = 1.0+max_diff
+  @qthreads for i ∈ 1:k
+    ll = 0
+    while (ll == 0) || (ll/best[] > threshold)
+      println("  Retry ", i, "...\n  Learning vtree ", i, "...")
+      V = learn_vtree(D_df; alg = rand((:bottomup, :topdown)))
+      println("  Learning circuit ", i, "...")
+      K[i], _ = learn_rpp(D, V; bin, I, kwargs...)
+      ll = NLL(K[i], validation)
+      Threads.atomic_min!(best, ll)
+    end
+    println("  Found suitable candidate for ", i)
+  end
+  if strategy != :stack
+    # best = Inf
+    for i ∈ 1:k
+      nll = mini_em(K[i], D; steps = em_steps, decay, batch_size, validation)
+      LL[i] = nll
+      # if nll < best best = nll end
+    end
+  end
+  # R = findall(x -> x/best > threshold, LL)
+  # println("Discarding worst components...")
+  # while !isempty(R)
+    # @qthreads for i ∈ R K[i], _ = learn_rpp(D, Vtree(m, :random); bin, I, kwargs...) end
+    # for i ∈ R
+      # nll = mini_em(K[i], D; steps = em_steps, decay, batch_size, validation)
+      # LL[i] = nll
+      # if nll < best best = nll end
+    # end
+    # R = findall(x -> x/best > threshold, LL)
+    # println("  Candidates: ", LL)
+    # println("  Retries: ", R)
+  # end
+  w = rand(k)
+  S = Sum(K, w/sum(w))
+  println("Computing strategy...")
+  if strategy == :em learn_mix_em!(S, D; steps = 100)
+  elseif strategy == :stack learn_mix_stack!(S, D; v = 10, steps = 10, validation)
+  elseif strategy == :llw learn_mix_llw!(S, D) end
+  return S
+end
+export ensemble
+
+function kfold(n::Int, p::Int)::Vector{Tuple{UnitRange, Vector{Int}}}
+  F = Vector{Tuple{UnitRange, Vector{Int}}}(undef, p)
+  j = s = 1
+  k = n÷p
+  for i ∈ 1:n%p
+    if s > 1
+      I = collect(1:s-1)
+      if s+k < n append!(I, s+k+1:n) end
+    else I = collect(s+k+1:n) end
+    F[j] = (s:s+k, I)
+    s += k+1
+    j += 1
+  end
+  k = n÷p-1
+  for i ∈ 1:p-n%p
+    if s > 1
+      I = collect(1:s-1)
+      if s+k < n append!(I, s+k+1:n) end
+    else I = collect(s+k+1:n) end
+    F[j] = (s:s+k, I)
+    s += k+1
+    j += 1
+  end
+  return F
+end
+
+function learn_mix_stack!(P::Node, D::AbstractMatrix{<:Real}; v::Int = 10, steps::Int = 10,
+    validation::AbstractMatrix{<:Real} = D)
+  N, K = size(D, 1), length(P.children)
+  N == 1 && return
+  F = kfold(N, v)
+  LL = Matrix{Float64}(undef, N, K)
+  for j ∈ 1:v
+    I, J = F[j]
+    T, R = view(D, I, :), view(D, J, :)
+    for i ∈ 1:K
+      LL[I,i] .= mini_em(P.children[i], R; steps, validation)
+    end
+    println("Stacking fold ", j, '/', v, '.')
+  end
+  learn_mix_em!(P, D; steps, reuse = LL)
+  for i ∈ 1:K
+    mini_em(P.children[i], D; steps, validation)
+  end
+  return nothing
+end
+export learn_mix_stack!
+
+function learn_mix_em!(P::Node, D::AbstractMatrix{<:Real}; steps::Int = 100, reuse::Union{AbstractMatrix{<:Real}, Nothing} = nothing)
+  N, K = size(D, 1), length(P.children)
+  ln_N = log(N)
+  W = Matrix{Float64}(undef, N, K)
+  N_k = Vector{Float64}(undef, K)
+  ll = Vector{Float64}(undef, N)
+  if isnothing(reuse)
+    println("Pre-computing component log-likelihoods...")
+    LL = Matrix{Float64}(undef, N, K)
+    for i ∈ 1:K logpdf!(view(LL, :, i), P.children[i], D) end
+  else LL = reuse end
+  L_w = Vector{Float64}(undef, K)
+  for j ∈ 1:steps
+    L_w .= log.(P.weights)
+    Threads.@threads for i ∈ 1:K
+      W[:,i] .= LL[:,i] .+ L_w[i]
+    end
+    Threads.@threads for i ∈ 1:N
+      W[i,:] .-= LogicCircuits.logsumexp(W[i,:])
+    end
+    Threads.@threads for i ∈ 1:K
+      N_k[i] = LogicCircuits.logsumexp(W[:,i])
+    end
+    L_w = N_k .- ln_N
+    P.weights .= exp.(L_w)
+    Threads.@threads for i ∈ 1:K
+      W[:,i] .= LL[:,i] .+ L_w[i]
+    end
+    Threads.@threads for i ∈ 1:N
+      ll[i] = LogicCircuits.logsumexp(W[i,:])
+    end
+    println("EM Iteration ", j, "/", steps, ". Log likelihood ", sum(ll)/N)
+  end
+end
+export learn_mix_em!
+
+function learn_mix_llw!(E::Node, D::AbstractMatrix{<:Real})
+    n = length(E.children)
+    LL = Vector{Float64}(undef, n)
+    for i ∈ 1:n @inbounds LL[i] = avgll(E.children[i], D) end
+    W = exp.(LL .- maximum(LL))
+    E.weights .= W ./ sum(W)
+end
+export learn_mix_llw!
+
+"Bayesian Model Combination (BMC)."
+mutable struct BMC
+  E::Vector{Node}
+  W::Vector{Float64}
+  n::Int
+
+  "Constructs a BMC with q*t combinations, each with n models."
+  function BMC(n::Int, D::AbstractMatrix{<:Real}, q::Int, t::Int;
+      α::Union{Vector{Float64}, Nothing} = nothing,
+      reuse::Union{Vector{Node}, Nothing} = nothing, args...)::ModelComb
+    if isnothing(α) α = ones(n) end
+    K = q*t
+    M = K*n
+    D_df = DataFrame(D, :auto)
+    I = bin ? [(Indicator(u, 0), Indicator(u, 1)) for u ∈ 1:m] : Tuple{Indicator, Indicator}[]
+    if isnothing(reuse)
+      circs = Vector{Node}(undef, M)
+      @qthreads for i ∈ 1:M
+        circs[i], _ = learn_rpp(D, learn_vtree(D_df; alg = rand((:clt, :bottomup, :topdown))); bin,
+                                I, kwargs...)
+      end
+    else circs = reuse end
+    E = Vector{Node}(undef, K)
+    dirichlet = Dirichlet(α)
+    LL = Vector{Float64}(undef, K)
+    W = Vector{Vector{Float64}}(undef, q)
+    e = 1
+    for i ∈ 1:t
+      i_max, max_ll = -1, -Inf
+      for j ∈ 1:q
+        W[j] = rand(dirichlet)
+        E[e] = Sum(circs[(e-1)*n+1:e*n], log.(W[j]))
+        ll = avgll(E[e], D)
+        # Assume a uniform prior on the ensembles so that max p(e|D) = max p(D|e).
+        if ll > max_ll i_max, max_ll = j, ll end
+        LL[e] = ll
+        println("BMC iteration ", e, '/', K, '.')
+        e += 1
+      end
+      α .+= W[i_max]
+    end
+    LL .= exp.(LL .- maximum(LL))
+    LL .= LL ./ sum(LL)
+    return new(E, log.(LL), K)
+  end
+end
+export BMC
+
+function avgll(B::BMC, D::AbstractMatrix{<:Real})::Float64
+  n, m = nrow(D), B.n
+  LL = Matrix{Float64}(undef, n, m)
+  for i ∈ 1:B.n
+    logpdf!(view(LL, :, i), B.E[i], D)
+    LL[:,i] .+= B.W[i]
+  end
+  return LogicCircuits.logsumexp(LL, 2)/size(D, 1)
+end
+@inline NLL(B::BMC, D::AbstractMatrix{<:Real})::Float64 = -avgll(B, D)

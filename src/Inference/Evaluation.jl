@@ -381,6 +381,9 @@ function ncircuits!(values::Dict{Node, Int}, r::Node)
   return values[r]
 end
 
+@inline avgll(r::Node, data::AbstractMatrix{<:Real}) = logpdf(r, data) / size(data, 1)
+export avgll
+
 """
     NLL(r::Node, data::AbstractMatrix{<:Real})
 

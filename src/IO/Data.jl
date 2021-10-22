@@ -26,7 +26,7 @@ function twenty_datasets(name::String; as_df::Bool = true)::Union{Tuple{DataFram
       header = false,
       truestrings = ["1"],
       falsestrings = ["0"],
-      type = Bool,
+      types = Bool,
       strict = true,
     )
     # make sure the data is backed by a `BitArray`

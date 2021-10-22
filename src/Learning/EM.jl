@@ -49,7 +49,7 @@ function update(
   smoothing::Float64 = 1e-4,
   learngaussians::Bool = false,
   minimumvariance::Float64 = learner.minimumvariance;
-  verbose::Bool = false
+  verbose::Bool = false, validation::AbstractMatrix = Data
 )
 
   numrows, numcols = size(Data)
@@ -136,7 +136,7 @@ function update(
   end
 
   if verbose && (learner.steps % 2 == 0)
-    println("Iteration $(learner.steps). η: $(learningrate), NLL: $(pNLL(values, curr, learner.circ.L, Data))")
+    println("Iteration $(learner.steps). η: $(learningrate), NLL: $(pNLL(values, curr, learner.circ.L, validation))")
   end
 
   swap!(learner.circ)
