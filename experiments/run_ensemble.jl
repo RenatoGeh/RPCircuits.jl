@@ -21,9 +21,9 @@ batchsize = default_value(6, 500, x -> parse(Int, x))
 tee(out, str) = (write(out, str * "\n"); println(str))
 verbose = true
 
-all_data = ["accidents", "ad", "baudio", "bbc", "bnetflix", "book", "c20ng", "cr52", "cwebkb",
+all_data = [#="accidents", "ad", "baudio", "bbc", "bnetflix", "book",=# "c20ng"#=, "cr52", "cwebkb",
             "dna", "jester", "kdd", "kosarek", "msnbc", "msweb", "nltcs", "plants", "pumsb_star",
-            "tmovie", "tretail"]
+            "tmovie", "tretail"=#]
 
 function run()
   # datasets = ["nltcs", "book", "plants", "baudio", "jester", "bnetflix", "accidents", "dna"]
@@ -35,8 +35,12 @@ function run()
     tee(out_data, "Dataset: " * datasets[data_idx])
     R, V, T = twenty_datasets(datasets[data_idx]; as_df = false)
     println("Learning structure...")
-    c_time = @elapsed C = ensemble(R, 5; em_steps, batch_size = batchsize, max_diff = 0.1,
-                                   bin = true, validation = V, split, max_height, strategy)
+    if strategy == :bma
+      c_time = @elapsed C = BMC(3, R, 3, 3; split, max_height, bin = true)
+    else
+      c_time = @elapsed C = ensemble(R, 5; em_steps, batch_size = batchsize, max_diff = 0.1,
+                                     bin = true, validation = V, split, max_height, strategy)
+    end
     tee(out_data, """
         Name: $(name)
         Split type: $(split)
