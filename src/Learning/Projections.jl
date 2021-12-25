@@ -438,7 +438,7 @@ function learn_projections!(
     data, dists, Σ, n_height = popfirst!(Q)
     m = size(data, 1)
     n_height += 1
-    push!(C, Σ)
+    # push!(C, Σ)
     Ch = Σ.children
     Σ.weights .= fill(c_weight, n_projs)
     for i in 1:n_projs

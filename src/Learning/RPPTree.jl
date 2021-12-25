@@ -1,5 +1,4 @@
 using LogicCircuits: Vtree, PlainVtreeLeafNode, variable, variables
-import LogicCircuits
 using ProbabilisticCircuits: learn_vtree
 using LinearAlgebra
 using ThreadPools
@@ -43,7 +42,7 @@ function learn_rpp!(S::SubArray{<:Real, 2}, V::Vtree, f::Function, pa_id::Int, h
       μ = mean(S; dims = 1)
       s = std(S; dims = 1, mean = μ)
       map!(x -> !(x > 0.2) ? 0.04 : x*x, s, s)
-      for i ∈ 1:m ch[i] = Gaussian(U[i], μ, s) end
+      for i ∈ 1:m ch[i] = Gaussian(U[i], μ[i], s[i]) end
     end
     return Product(ch)
   end
@@ -75,7 +74,7 @@ function learn_rpp!(S::SubArray{<:Real, 2}, V::Vtree, f::Function, pa_id::Int, h
 end
 
 """Learns a PC by projections and returns the root and a vector with all projections."""
-function learn_rpp(D::Matrix{<:Real}, V::Vtree; split::Symbol = :max, c::Real = 1.0, r::Real = 2.0,
+function learn_rpp(D::AbstractMatrix{<:Real}, V::Vtree; split::Symbol = :max, c::Real = 1.0, r::Real = 2.0,
     trials::Int = 10, bin::Bool = true, min_examples::Int = 30, max_height::Int = 10,
     I::Vector{Tuple{Indicator, Indicator}} = bin ? [(Indicator(u, 0), Indicator(u, 1)) for u ∈ 1:size(D, 2)] : Tuple{Indicator, Indicator}[])::Tuple{Node, Vector{Projection}}
   f = split == :max ? (x -> max_rulep(x, r, trials)) : (x -> sid_rulep(x, c, trials))
@@ -254,32 +253,6 @@ function ensemble(D::AbstractMatrix{<:Real}, k::Integer; em_steps::Integer = 10,
 end
 export ensemble
 
-function kfold(n::Int, p::Int)::Vector{Tuple{UnitRange, Vector{Int}}}
-  F = Vector{Tuple{UnitRange, Vector{Int}}}(undef, p)
-  j = s = 1
-  k = n÷p
-  for i ∈ 1:n%p
-    if s > 1
-      I = collect(1:s-1)
-      if s+k < n append!(I, s+k+1:n) end
-    else I = collect(s+k+1:n) end
-    F[j] = (s:s+k, I)
-    s += k+1
-    j += 1
-  end
-  k = n÷p-1
-  for i ∈ 1:p-n%p
-    if s > 1
-      I = collect(1:s-1)
-      if s+k < n append!(I, s+k+1:n) end
-    else I = collect(s+k+1:n) end
-    F[j] = (s:s+k, I)
-    s += k+1
-    j += 1
-  end
-  return F
-end
-
 function learn_mix_stack!(P::Node, D::AbstractMatrix{<:Real}; v::Int = 10, steps::Int = 10,
     validation::AbstractMatrix{<:Real} = D)
   N, K = size(D, 1), length(P.children)
@@ -320,10 +293,10 @@ function learn_mix_em!(P::Node, D::AbstractMatrix{<:Real}; steps::Int = 100, reu
       W[:,i] .= LL[:,i] .+ L_w[i]
     end
     Threads.@threads for i ∈ 1:N
-      W[i,:] .-= LogicCircuits.logsumexp(W[i,:])
+      W[i,:] .-= logsumexp(W[i,:])
     end
     Threads.@threads for i ∈ 1:K
-      N_k[i] = LogicCircuits.logsumexp(W[:,i])
+      N_k[i] = logsumexp(W[:,i])
     end
     L_w = N_k .- ln_N
     P.weights .= exp.(L_w)
@@ -331,7 +304,7 @@ function learn_mix_em!(P::Node, D::AbstractMatrix{<:Real}; steps::Int = 100, reu
       W[:,i] .= LL[:,i] .+ L_w[i]
     end
     Threads.@threads for i ∈ 1:N
-      ll[i] = LogicCircuits.logsumexp(W[i,:])
+      ll[i] = logsumexp(W[i,:])
     end
     println("EM Iteration ", j, "/", steps, ". Log likelihood ", sum(ll)/N)
   end
@@ -355,19 +328,21 @@ mutable struct BMC
 
   "Constructs a BMC with q*t combinations, each with n models."
   function BMC(n::Int, D::AbstractMatrix{<:Real}, q::Int, t::Int;
-      α::Union{Vector{Float64}, Nothing} = nothing,
-      reuse::Union{Vector{Node}, Nothing} = nothing, args...)::ModelComb
+      α::Union{Vector{Float64}, Nothing} = nothing, reuse::Union{Vector{Node}, Nothing} = nothing,
+      validation::AbstractMatrix{<:Real} = D, bin::Bool = true, kwargs...)::ModelComb
     if isnothing(α) α = ones(n) end
     K = q*t
     M = K*n
     D_df = DataFrame(D, :auto)
+    m = size(D, 2)
     I = bin ? [(Indicator(u, 0), Indicator(u, 1)) for u ∈ 1:m] : Tuple{Indicator, Indicator}[]
     if isnothing(reuse)
       circs = Vector{Node}(undef, M)
       @qthreads for i ∈ 1:M
-        circs[i], _ = learn_rpp(D, learn_vtree(D_df; alg = rand((:clt, :bottomup, :topdown))); bin,
+        circs[i], _ = learn_rpp(D, learn_vtree(D_df; alg = rand((:bottomup, :topdown))); bin,
                                 I, kwargs...)
       end
+      for i ∈ 1:M mini_em(circs[i], D; steps = 6, validation) end
     else circs = reuse end
     E = Vector{Node}(undef, K)
     dirichlet = Dirichlet(α)
@@ -378,12 +353,12 @@ mutable struct BMC
       i_max, max_ll = -1, -Inf
       for j ∈ 1:q
         W[j] = rand(dirichlet)
-        E[e] = Sum(circs[(e-1)*n+1:e*n], log.(W[j]))
-        ll = avgll(E[e], D)
+        E[e] = Sum(circs[(e-1)*n+1:e*n], W[j])
+        ll = avgll(E[e], validation)
         # Assume a uniform prior on the ensembles so that max p(e|D) = max p(D|e).
         if ll > max_ll i_max, max_ll = j, ll end
         LL[e] = ll
-        println("BMC iteration ", e, '/', K, '.')
+        println("BMC iteration ", e, '/', K, ": ", ll)
         e += 1
       end
       α .+= W[i_max]
@@ -396,12 +371,17 @@ end
 export BMC
 
 function avgll(B::BMC, D::AbstractMatrix{<:Real})::Float64
-  n, m = nrow(D), B.n
+  n, m = size(D, 1), B.n
   LL = Matrix{Float64}(undef, n, m)
   for i ∈ 1:B.n
     logpdf!(view(LL, :, i), B.E[i], D)
-    LL[:,i] .+= B.W[i]
+    @inbounds LL[:,i] .+= B.W[i]
   end
-  return LogicCircuits.logsumexp(LL, 2)/size(D, 1)
+  S = Vector{Float64}(undef, n)
+  Threads.@threads for i ∈ 1:n
+    @inbounds S[i] = logsumexp(view(LL, i, :))
+  end
+  return sum(S)/n
 end
 @inline NLL(B::BMC, D::AbstractMatrix{<:Real})::Float64 = -avgll(B, D)
+@inline Base.size(B::BMC)::Tuple{Int, Int, Int} = reduce(.+, size.(B.E))

@@ -1,4 +1,5 @@
 using DataFrames
+using Downloads
 using CSV
 using LazyArtifacts
 using MLDatasets
@@ -67,3 +68,19 @@ Returns an MNIST instance in image format.
 """
 mnist_img(X::AbstractVector{Float64}) = (MNIST.convert2image(reshape(X[1:end-1], 28, 28)), X[end])
 export mnist_img
+
+const continuous_datasets_names = ["abalone", "banknote", "ca", "kinematics", "quake", "sensorless",
+                                   "chemdiab", "oldfaithful", "iris", "triazines"]
+
+"""
+    data = continuous_datasets(name)
+
+Load a given dataset from the continuous density estimation datasets. Automatically downloads the files as julia Artifacts.
+See https://github.com/RenatoGeh/CDEBD for a list of avaialble datasets.
+"""
+function continuous_datasets(name::String; as_df::Bool = true)::Union{DataFrame, Matrix{Float64}}
+  @assert in(name, continuous_datasets_names)
+  D = CSV.File(Downloads.download("https://raw.githubusercontent.com/RenatoGeh/CDEBD/main/datasets/$(name).data")) |> DataFrame
+  return as_df ? D : Matrix{Float64}(D)
+end
+export continuous_datasets

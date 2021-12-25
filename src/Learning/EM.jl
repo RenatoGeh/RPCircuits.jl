@@ -11,8 +11,8 @@ mutable struct SEM <: ParameterLearner
   tolerance::Float64 # tolerance for convergence criterion
   steps::Integer   # number of learning steps (epochs)
   minimumvariance::Float64 # minimum variance for Gaussian leaves
-  function SEM(r::Node)
-    return new(compile(CCircuit, r), NaN, NaN, 1e-4, 0, 0.5)
+  function SEM(r::Node; gauss::Bool = false)
+    return new(compile(CCircuit, r; gauss), NaN, NaN, 1e-4, 0, 0.5)
   end
 end
 export SEM

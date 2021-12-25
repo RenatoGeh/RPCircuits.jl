@@ -60,11 +60,13 @@ Univariate Categorical Distribution Node
 struct Categorical <: Leaf
   scope::UInt
   values::Vector{Float64}
+  offset::Int
+  Categorical(sc::Integer, vals::AbstractArray{<:Real}; offset = 0) = new(sc, vals, offset)
 end
 export Categorical
 
 function (n::Categorical)(x::AbstractVector{<:Real})::Float64
-  return isnan(x[n.scope]) ? 1.0 : n.values[Int(x[n.scope])]
+  return isnan(x[n.scope]) ? 1.0 : n.values[Int(x[n.scope])+n.offset]
 end
 
 @inline Base.copy(c::Categorical)::Categorical = Categorical(c.scope, c.values)
@@ -131,7 +133,7 @@ Evaluates leaf `node` at the given `value` in log domain.
   isnan(value) ? 0.0 : value == Int(n.value) ? 0.0 : -Inf
 @inline logpdf(n::Indicator, value::Float64) =
   isnan(value) ? 0.0 : abs(value - n.value) < n.tolerance ? 0.0 : -Inf
-@inline logpdf(n::Categorical, value::Integer) = log(n.values[value])
+@inline logpdf(n::Categorical, value::Integer) = log(n.values[value+n.offset])
 @inline logpdf(n::Categorical, value::Float64) = isnan(value) ? 0.0 : logpdf(n, Int(value))
 @inline logpdf(n::Gaussian, value::Float64)::Float64 =
   isnan(value) ? 0.0 : (-(value - n.mean)^2 / (2 * n.variance)) - log(2 * π * n.variance) / 2
