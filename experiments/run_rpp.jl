@@ -4,11 +4,17 @@ using Random
 using Serialization
 using Printf
 using Statistics
+using Logging
 
 using BlossomV
 using ProbabilisticCircuits: learn_vtree
 using LogicCircuits: Vtree
 using DataFrames
+
+using GaussianMixtures
+
+# using Debugger
+# break_on(:error)
 
 default_value(i, x, f) = length(ARGS) < i ? x : f(ARGS[i])
 
@@ -31,6 +37,8 @@ function run_bin()
   datasets = all_data
   LL = Vector{Float64}(undef, length(datasets))
   S = Vector{Tuple{Int, Int, Int}}(undef, length(datasets))
+  history = Vector{Vector{Float64}}(undef, length(datasets))
+  history_rand = Vector{Vector{Float64}}(undef, length(datasets))
   for data_idx ∈ 1:length(datasets)
     out_data = open("logs/$(name)_rpp_$(datasets[data_idx]).log", "w")
     tee(out_data, "Dataset: " * datasets[data_idx])
@@ -38,8 +46,7 @@ function run_bin()
     println("Learning structure...")
     v_time = @elapsed vtree = learn_vtree(DataFrame(R, :auto); alg = :bottomup)
     println("  Learning circuit...")
-    c_time = @elapsed C, P = learn_rpp(R, vtree; split, max_height)
-    println("  Number of projections: ", length(P))
+    c_time = @elapsed C, _ = learn_rpp(R, vtree; split, max_height, bin = true, min_examples = 20, pseudocount = 0)
     tee(out_data, """
         Name: $(name)
         Split type: $(split)
@@ -56,82 +63,145 @@ function run_bin()
     tee(out_data, "Mini-batch EM...")
     avgnll = 0.0
     runnll = 0.0
+    H = Vector{Float64}()
     batch_time = @elapsed while learner.steps < em_steps
       sid = rand(1:(length(indices)-batchsize))
       batch = view(R, indices[sid:(sid+batchsize-1)], :)
       η = 0.975^learner.steps
-      update(learner, batch, η; verbose, validation = V)
+      update(learner, batch, η, 1e-4; verbose, validation = T, history = H)
+      # update(learner, batch, η, 1e-4; verbose = false, validation = V)
     end
     tee(out_data, "Batch EM LL: " * string(-NLL(C, T)))
     tee(out_data, "Full EM...")
     η = 1.0
     em_time = @elapsed while learner.steps < full_em_steps
-      update(learner, R, η; verbose, validation = V)
+      update(learner, R, η; verbose = false, validation = V)
     end
     LL[data_idx] = -NLL(C, T)
+    push!(H, -LL[data_idx])
+    history[data_idx] = H
     tee(out_data, "Full EM LL: " * string(LL[data_idx]))
     tee(out_data, "Size: " * string(S[data_idx]))
     tee(out_data, @sprintf("Vtree time: %.8f\nCircuit time: %.8f\nBatch EM time: %.8f\nFull EM time: %.8f",
                            v_time, c_time, batch_time, em_time))
+    randomize!(C)
+    println("Randomizing...")
+
+    learner = SEM(C)
+    indices = shuffle!(collect(1:size(R,1)))
+    avgnll = 0.0
+    runnll = 0.0
+    H = Vector{Float64}()
+    batch_time = @elapsed while learner.steps < em_steps
+      sid = rand(1:(length(indices)-batchsize))
+      batch = view(R, indices[sid:(sid+batchsize-1)], :)
+      η = 0.975^learner.steps
+      update(learner, batch, η, 1e-4; verbose, validation = T, history = H)
+    end
+    η = 1.0
+    em_time = @elapsed while learner.steps < full_em_steps
+      update(learner, R, η; verbose = false, validation = V)
+    end
+    push!(H, NLL(C, T))
+    history_rand[data_idx] = H
     close(out_data)
   end
   println(LL)
   serialize("results/rpp_$(name).data", LL)
   serialize("results/rpp_$(name)_size.data", S)
+  serialize("results/rpp_$(name)_hist.data", history)
+  serialize("results/rpp_$(name)_rand_hist.data", history_rand)
 end
 
-cont_data = ["abalone", "banknote", "ca", "kinematics", "quake", "sensorless", "chemdiab",
+cont_data = ["abalone", "banknote", "ca", "kinematics", "quake", "sensorless", "chemdiab", "flowsize",
              "oldfaithful", "iris"]
+
+smoothing, minimumvariance = 0.1, 0.0001
 
 function run_cont()
   datasets = cont_data
+  # datasets = ["flowsize"]
   LL = Vector{Float64}(undef, length(datasets))
   S = Vector{Tuple{Int, Int, Int}}(undef, length(datasets))
   for data_idx ∈ 1:length(datasets)
     out_data = open("logs/$(name)_rpp_$(datasets[data_idx]).log", "w")
     tee(out_data, "Dataset: " * datasets[data_idx])
-    D = continuous_datasets(datasets[data_idx]; as_df = false)
-    D = D[shuffle(1:size(D, 1)), :]
+    O = continuous_datasets(datasets[data_idx]; as_df = false, normalize = false)
+    # O = O[shuffle(1:size(O, 1)), :]
+    D, E = normalize(O)
     P = partition_kfold(D, 10)
+    Q = partition_kfold(O, 10)
     lls = zeros(10)
     c_sizes = Vector{Tuple{Int, Int, Int}}(undef, 10)
     v_times, c_times, batch_times, em_times = zeros(10), zeros(10), zeros(10), zeros(10)
+    # lls_rand = zeros(10)
     for (i, (T, R)) ∈ enumerate(P)
       println("Learning structure...")
-      v_time = @elapsed vtree = learn_vtree_cont(R; alg = :topdown)
-      println("  Learning circuit...")
-      c_time = @elapsed C, P = learn_rpp(R, vtree; split, max_height, bin = false, min_examples = 10)
-      println("  Number of projections: ", length(P))
-      tee(out_data, """
-          Name: $(name)
-          Split type: $(split)
-          Max height: $(max_height)
-          EM steps: $(em_steps)
-          Full EM steps: $(full_em_steps)
-          K-fold partition: $(i)
-          """)
-      c_sizes[i] = size(C)
-      tee(out_data, "Size: " * string(c_sizes[i]) * " -> " * string(sum(c_sizes[i])))
-      tee(out_data, "LL: " * string(-NLL(C, T)))
+      l = -Inf
+      C, v_time, c_time = nothing, nothing, nothing
+      while !isfinite(l)
+        v_time = @elapsed vtree = learn_vtree_cont(R; alg = :bottomup)
+        println("  Learning circuit...")
+        c_time = @elapsed C = learn_rpp_auto(R, vtree; samples = 20, split, max_height, bin = false, min_examples = 20, gmm = true)
+        # C_r = randomize(C)
+        # println("  Number of projections: ", length(P))
+        tee(out_data, """
+            Name: $(name)
+            Split type: $(split)
+            Max height: $(max_height)
+            EM steps: $(em_steps)
+            Full EM steps: $(full_em_steps)
+            K-fold partition: $(i)
+            """)
+        c_sizes[i] = size(C)
+        tee(out_data, "Size: " * string(c_sizes[i]) * " -> " * string(sum(c_sizes[i])))
+        l = -NLL(C, T)
+        tee(out_data, "LL: " * string(l))
+      end
+
       println("Learning parameters...")
       learner = SEM(C; gauss = true)
       indices = shuffle!(collect(1:size(R,1)))
       tee(out_data, "Mini-batch EM...")
-      avgnll = 0.0
-      runnll = 0.0
+      n = size(R, 1)
+      l_batch = batchsize
+      if n < 5000 l_batch = 100 end
+      if n < 300 l_batch = 50 end
       batch_time = @elapsed while learner.steps < em_steps
-        sid = rand(1:(length(indices)-batchsize))
-        batch = view(R, indices[sid:(sid+batchsize-1)], :)
+        sid = rand(1:(length(indices)-l_batch))
+        batch = view(R, indices[sid:(sid+l_batch-1)], :)
         η = 0.975^learner.steps
-        update(learner, batch, η, 0.05, true, 0.01; verbose, validation = T)
+        update(learner, batch, η, smoothing, true, minimumvariance; verbose, validation = T)
       end
       tee(out_data, "Batch EM LL: " * string(-NLL(C, T)))
       tee(out_data, "Full EM...")
       η = 1.0
       em_time = @elapsed while learner.steps < full_em_steps
-        update(learner, R, η, 0.05, true, 0.01; verbose, validation = T)
+        update(learner, R, η, smoothing, true, minimumvariance; verbose, validation = T)
       end
-      lls[i] = -NLL(C, T)
+      rescale_gauss!(C, E)
+      lls[i] = -NLL(C, Q[i][1])
+      println("Training LL: ", -NLL(C, Q[i][2]))
+
+      # println("Learning parameters from randomized circuit...")
+      # learner = SEM(C_r; gauss = true)
+      # indices = shuffle!(collect(1:size(R,1)))
+      # tee(out_data, "Mini-batch EM...")
+      # l_batch = batchsize > size(R, 1) ? size(R, 1) : batchsize
+      # batch_time = @elapsed while learner.steps < em_steps
+        # sid = rand(1:(length(indices)-l_batch))
+        # batch = view(R, indices[sid:(sid+l_batch-1)], :)
+        # η = 0.975^learner.steps
+        # update(learner, batch, η, smoothing, true, minimumvariance; verbose, validation = T)
+      # end
+      # tee(out_data, "Batch EM LL: " * string(-NLL(C_r, T)))
+      # tee(out_data, "Full EM...")
+      # η = 1.0
+      # em_time = @elapsed while learner.steps < full_em_steps
+        # update(learner, R, η, smoothing, true, minimumvariance; verbose, validation = T)
+      # end
+      # lls_rand[i] = -NLL(C_r, T)
+
       tee(out_data, "Full EM LL: " * string(lls[i]))
       tee(out_data, "Size: " * string(c_sizes[i]))
       tee(out_data, @sprintf("Vtree time: %.8f\nCircuit time: %.8f\nBatch EM time: %.8f\nFull EM time: %.8f",
@@ -142,6 +212,7 @@ function run_cont()
     _s = [0, 0, 0]; for x ∈ c_sizes _s .= (_s[1]+x[1], _s[2]+x[2], _s[3]+x[3]) end; _s /= length(c_sizes)
     S[data_idx] = Tuple(round.(Int, _s))
     tee(out_data, "\n\nDataset: $(datasets[data_idx])\n=======\nAverage LL: " * string(LL[data_idx]))
+    # tee(out_data, "Average randomized LL: " * string(mean(lls_rand)))
     tee(out_data, "Average size: " * string(S[data_idx]))
     tee(out_data, @sprintf("Average times:\n-------\nVtree time: %.8f\nCircuit time: %.8f\nBatch EM time: %.8f\nFull EM time: %.8f\n=======\n\n",
                            mean(v_times), mean(c_times), mean(batch_times), mean(em_times)))
@@ -152,5 +223,37 @@ function run_cont()
   serialize("results/rpp_$(name)_size.data", S)
 end
 
-# run_bin()
-run_cont()
+function run_gmm()
+  datasets = cont_data
+  # datasets = ["flowsize"]
+  L_v = Vector{Vector{Float64}}(undef, length(datasets))
+  LL = Vector{Float64}(undef, length(datasets))
+  S = Vector{Tuple{Int, Int, Int}}(undef, length(datasets))
+  for data_idx ∈ 1:length(datasets)
+    out_data = open("logs/gmm_$(datasets[data_idx]).log", "w")
+    tee(out_data, "Dataset: " * datasets[data_idx])
+    O = continuous_datasets(datasets[data_idx]; as_df = false, normalize = false)
+    P = partition_kfold(O, 10)
+    lls = zeros(10)
+    for (i, (T, R)) ∈ enumerate(P)
+      println("Learning structure...")
+      M = GMM(5, R; method = :kmeans, kind = :diag, nInit = 50, nIter = 10, nFinal = 10)
+      println("Learning parameters...")
+      em!(M, R; nIter = 100, varfloor = 1e-3)
+      lls[i] = avll(M, T)
+      tee(out_data, "LL: " * string(lls[i]))
+    end
+    LL[data_idx] = mean(lls)
+    L_v[data_idx] = lls
+    tee(out_data, "\n\nDataset: $(datasets[data_idx])\n=======\nAverage LL: " * string(LL[data_idx]))
+    close(out_data)
+  end
+  println(LL)
+  serialize("results/gmm.data", LL)
+  return L_v
+end
+
+global_logger(SimpleLogger(stdout, Logging.Error))
+run_bin()
+# run_cont(
+# LL = run_gmm()
