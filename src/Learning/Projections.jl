@@ -52,13 +52,18 @@ Computes the average diameter Δ_A of a dataset given the mean of its instances.
 function avgdiam(S::AbstractMatrix{<:Real}, μ::Vector{<:Real})::Float64
   n = size(S, 1)
   Δ_A = 0
-  Threads.@threads for i ∈ 1:n
-    d = norm(S[i,:] - μ)
-    Δ_A += d*d
-  end
+  for i ∈ 1:n Δ_A += norm(S[i,:] - μ) end
   return 2*Δ_A/n
 end
 @inline avgdiam(S::AbstractMatrix{<:Real})::Float64 = avgdiam(S, vec(mean(S; dims = 1)))
+
+function avgdiam_p(S::AbstractMatrix{<:Real}, μ::Vector{<:Real})::Float64
+  n = size(S, 1)
+  Δ_A = Vector{Float64}(undef, n)
+  Threads.@threads for i ∈ 1:n @inbounds Δ_A[i] = norm(S[i,:] - μ) end
+  return 2*sum(Δ_A)/n
+end
+@inline avgdiam_p(S::AbstractMatrix{<:Real})::Float64 = avgdiam_p(S, vec(mean(S; dims = 1)))
 
 """
 `max_rule(S::AbstractMatrix{<:Real}, D::Matrix{Float64})`

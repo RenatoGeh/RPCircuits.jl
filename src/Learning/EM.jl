@@ -49,7 +49,7 @@ function update(
   smoothing::Float64 = 1e-4,
   learngaussians::Bool = false,
   minimumvariance::Float64 = learner.minimumvariance;
-  verbose::Bool = false, validation::AbstractMatrix = Data
+  verbose::Bool = false, validation::AbstractMatrix = Data, history = nothing
 )
 
   numrows, numcols = size(Data)
@@ -128,15 +128,26 @@ function update(
   if learngaussians
     Threads.@threads for n in gaussiannodes
       p = prev[n]
+      cg = curr[n]
       # online update: θ[t+1] = (1-η)*θ[t] + η*update(θ[t])
-      @inbounds p.mean = learningrate*means[n]/denon[n] + (1-learningrate)*n.mean
-      @inbounds p.variance = learningrate*(squares[n]/denon[n] - (p.mean)^2) + (1-learningrate)*n.variance
-      if p.variance < minimumvariance p.variance = minimumvariance end
+      # @assert !isnan(learningrate*means[n]/denon[n] + (1-learningrate)*cg.mean)
+      # @assert !isnan(learningrate*(squares[n]/denon[n] - (p.mean)^2) + (1-learningrate)*cg.variance)
+      mean_u = learningrate*means[n]/denon[n] + (1-learningrate)*cg.mean
+      if isnan(mean_u) mean_u = learningrate*means[n] + (1-learningrate)*cg.mean end
+      var_u = learningrate*(squares[n]/denon[n] - (p.mean)^2) + (1-learningrate)*cg.variance
+      if isnan(var_u) var_u = learningrate*(squares[n]-(p.mean*p.mean))+(1-learningrate)*cg.variance end
+      if !(isnan(mean_u) || isnan(var_u))
+        @inbounds p.mean = mean_u
+        @inbounds p.variance = var_u
+        if !(p.variance > minimumvariance) p.variance = minimumvariance end
+      end
     end
   end
 
   if verbose && (learner.steps % 2 == 0)
-    println("Iteration $(learner.steps). η: $(learningrate), NLL: $(pNLL(values, curr, learner.circ.L, validation))")
+    ll = pNLL(values, curr, learner.circ.L, validation)
+    if !isnothing(history) push!(history, ll) end
+    println("Iteration $(learner.steps). η: $(learningrate), NLL: $(ll)")
   end
 
   swap!(learner.circ)

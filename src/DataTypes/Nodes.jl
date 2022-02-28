@@ -18,6 +18,9 @@ mutable struct Sum <: Inner
 end
 export Sum
 
+# Only works if tree. TODO: general copying.
+@inline Base.copy(s::Sum)::Sum = Sum(copy.(s.children), copy(s.weights))
+
 """
 Product node data type
 """
@@ -28,6 +31,9 @@ struct Product <: Inner
   Product(n::Int) = new(Vector{Node}(undef, n))
 end
 export Product
+
+# Only works if tree. TODO: general copying.
+@inline Base.copy(p::Product)::Product = Product(copy.(p.children))
 
 """
 Abstract leaf node type

@@ -176,3 +176,17 @@ function partition_kfold(D::AbstractMatrix, k::Int)::Vector{Tuple{AbstractMatrix
   return P
 end
 export partition_kfold
+
+function rescale_gauss!(r::Node, extrem::Vector{Tuple{Float64, Float64}}; scale::Real = 1.0)::Node
+  G = leaves(r)
+  scq = scale*scale
+  for g ∈ G
+    minim, maxim = extrem[g.scope]
+    d = maxim-minim
+    s = d*d
+    g.mean = (g.mean*d)/scale+minim
+    g.variance *= s/scq
+  end
+  return r
+end
+export rescale_gauss!

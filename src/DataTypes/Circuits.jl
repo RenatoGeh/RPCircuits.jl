@@ -559,3 +559,20 @@ function vectorize(r::Node)::Tuple{Vector{Node}, Dict{Node, Int}}
   return reverse!(N), M
 end
 export vectorize
+
+"""
+    randomize(r::Node)::Node
+
+Randomizes the weights of the circuit rooted at `r`.
+"""
+function randomize!(r::Node)::Node
+  S = sums(r)
+  for s ∈ S
+    w = rand(length(s.children))
+    s.weights .= w/sum(w)
+  end
+  return r
+end
+# If not using tree, implement proper copying.
+randomize(r::Node)::Node = randomize!(copy(r))
+export randomize, randomize!

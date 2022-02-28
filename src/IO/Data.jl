@@ -70,7 +70,7 @@ mnist_img(X::AbstractVector{Float64}) = (MNIST.convert2image(reshape(X[1:end-1],
 export mnist_img
 
 const continuous_datasets_names = ["abalone", "banknote", "ca", "kinematics", "quake", "sensorless",
-                                   "chemdiab", "oldfaithful", "iris", "triazines"]
+                                   "chemdiab", "oldfaithful", "iris", "flowsize", "triazines"]
 
 """
     data = continuous_datasets(name)
@@ -78,9 +78,48 @@ const continuous_datasets_names = ["abalone", "banknote", "ca", "kinematics", "q
 Load a given dataset from the continuous density estimation datasets. Automatically downloads the files as julia Artifacts.
 See https://github.com/RenatoGeh/CDEBD for a list of avaialble datasets.
 """
-function continuous_datasets(name::String; as_df::Bool = true)::Union{DataFrame, Matrix{Float64}}
+function continuous_datasets(name::String; as_df::Bool = true, normalize::Bool = false)::Union{DataFrame, Matrix{Float64}}
   @assert in(name, continuous_datasets_names)
-  D = CSV.File(Downloads.download("https://raw.githubusercontent.com/RenatoGeh/CDEBD/main/datasets/$(name).data")) |> DataFrame
+  url = name ∈ ["iris", "oldfaithful", "chemdiab"] ? "https://raw.githubusercontent.com/RenatoGeh/CDEBD/main/datasets/$(name).data" : "https://raw.githubusercontent.com/RenatoGeh/CDEBD/main/kfold/$(name)/$(name).data"
+  D = CSV.File(Downloads.download(url)) |> DataFrame
+  if normalize
+    M = Matrix{Float64}(D)
+    E = vec(extrema(M; dims = 1))
+    Threads.@threads for x ∈ 1:size(M, 2)
+      a, b = E[x]
+      M[:,x] .-= a
+      d = b-a
+      M[:,x] ./= d
+    end
+    return as_df ? DataFrame(M, :auto) : M
+  end
   return as_df ? D : Matrix{Float64}(D)
 end
 export continuous_datasets
+
+function continuous_10fold_datasets(name::String)::Vector{Tuple{AbstractMatrix, AbstractMatrix}}
+  @assert in(name, continuous_datasets_names)
+  D = [Matrix{Float64}(CSV.File(Downloads.download("https://raw.githubusercontent.com/RenatoGeh/CDEBD/main/kfold/$(name)/$(name).$(i).data")) |> DataFrame) for i ∈ 1:10]
+  P = Vector{Tuple{AbstractMatrix, AbstractMatrix}}(undef, 10)
+  for i ∈ 1:10 P[i] = (D[i], vcat(D[begin:end .!= i]...)) end
+  return P
+end
+export continuous_10fold_datasets
+
+function normalize!(D::AbstractMatrix; scale::Real = 1.0)::Vector{Tuple{Float64, Float64}}
+  E = vec(extrema(D; dims = 1))
+  for x ∈ 1:size(D, 2)
+    a, b = E[x]
+    D[:,x] .-= a
+    d = b-a
+    D[:,x] ./= d
+    D[:,x] .*= scale
+  end
+  return E
+end
+@inline function normalize(D::AbstractMatrix; scale::Real = 1.0)::Tuple{AbstractMatrix, Vector{Tuple{Float64, Float64}}}
+  M = copy(D)
+  return M, normalize!(M; scale)
+end
+export normalize, normalize!
+

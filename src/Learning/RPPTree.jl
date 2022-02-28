@@ -8,9 +8,61 @@ BLAS.set_num_threads(Threads.nthreads())
 
 @inline isleaf(v::Vtree)::Bool = isa(v, PlainVtreeLeafNode)
 
-function learn_rpp!(S::SubArray{<:Real, 2}, V::Vtree, f::Function, pa_id::Int, height::Int,
-    P::Vector{Projection}, bin::Bool, min_examples::Int, max_height::Int,
-    I::Vector{Tuple{Indicator, Indicator}})::Node
+function learn_rpp_proj!(S::SubArray{<:Real, 2}, V::Vtree, f::Function, pa_id::Int, height::Int,
+    P::Vector{Projection}, bin::Bool, min_examples::Int, max_height::Int, rep_projs::Int,
+    max_projs::Int, I::Vector{Tuple{Indicator, Indicator}}, hyperplanes::Vector{Function})::Node
+  n, m = size(S)
+  if (n < min_examples) || (height > max_height)
+    @label ff
+    ch = Vector{Node}(undef, m)
+    U = S.indices[2]
+    if bin
+      W = sum(S; dims = 1) / n
+      for i ∈ 1:m
+        u, w = U[i], W[i]
+        ⊥, ⊤ = I[u]
+        ch[i] = Sum([⊥, ⊤], [1.0-w, w])
+      end
+    else
+      μ = mean(S; dims = 1)
+      s = std(S; dims = 1, mean = μ)
+      map!(x -> !(x > 0.2) ? 0.04 : x*x, s, s)
+      for i ∈ 1:m ch[i] = Gaussian(U[i], μ[i], s[i]) end
+    end
+    return Product(ch)
+  end
+  if length(hyperplanes) < height
+    a, θ, g = f(S)
+    if isnothing(a) @goto ff end
+    push!(hyperplanes, g)
+  else
+    g = hyperplanes[height]
+  end
+  # Negatives (A) and positives (B).
+  A, B = select(g, S)
+  # Initially give weights as the data proportion.
+  k = size(A, 1)/n; w = [k, 1-k]
+  # Be sure to pass w as a pointer (actually a reference) to the sum's weights so we can
+  # efficiently compute during parameter learning.
+  # proj = Projection(pa_id, Ref(w), a, θ)
+  # push!(P, proj)
+  # IDs are the indexes of the parent projections.
+  id = length(P)
+  if rep_projs > 0
+    return Sum([learn_rpp_proj!(A, V, f, id, height+1, P, bin, min_examples, max_height,
+                                rep_projs-1, max_projs, I, hyperplanes),
+                learn_rpp_proj!(B, V, f, id, height+1, P, bin, min_examples, max_height,
+                                rep_projs-1, max_projs, I, hyperplanes)], w)
+  end
+  return Sum([learn_rpp_part!(A, V, f, id, height+1, P, bin, min_examples, max_height, max_projs,
+                              I, hyperplanes),
+              learn_rpp_part!(B, V, f, id, height+1, P, bin, min_examples, max_height, max_projs,
+                              I, hyperplanes)], w)
+end
+
+function learn_rpp_part!(S::SubArray{<:Real, 2}, V::Vtree, f::Function, pa_id::Int, height::Int,
+    P::Vector{Projection}, bin::Bool, min_examples::Int, max_height::Int, max_projs::Int,
+    I::Vector{Tuple{Indicator, Indicator}}, hyperplanes::Vector{Function})::Node
   n, m = size(S)
   # Single variable. Return univariate distribution.
   if isleaf(V)
@@ -24,7 +76,7 @@ function learn_rpp!(S::SubArray{<:Real, 2}, V::Vtree, f::Function, pa_id::Int, h
     μ = mean(Z)
     s = std(Z; mean = μ)
     # This deals with NaNs, Infs and 0.
-    if !(s > 0.2) s = 0.04 else s *= s end
+    if !(s < 0.2) s = 0.04 else s *= s end
     return Gaussian(u, μ, s)
   # Small dataset or max height. Return fully factorized circuit.
   elseif (n < min_examples) || (height > max_height)
@@ -47,6 +99,82 @@ function learn_rpp!(S::SubArray{<:Real, 2}, V::Vtree, f::Function, pa_id::Int, h
     return Product(ch)
   end
   # Create projection and subsequent sum node.
+  if length(hyperplanes) < height
+    a, θ, g = f(S)
+    if isnothing(a) @goto ff end
+    push!(hyperplanes, g)
+  else
+    g = hyperplanes[height]
+  end
+  # Negatives (A) and positives (B).
+  A, B = select(g, S)
+  # Initially give weights as the data proportion.
+  k = size(A, 1)/n; w = [k, 1-k]
+  # Be sure to pass w as a pointer (actually a reference) to the sum's weights so we can
+  # efficiently compute during parameter learning.
+  # proj = Projection(pa_id, Ref(w), a, θ)
+  # push!(P, proj)
+  # IDs are the indexes of the parent projections.
+  id = length(P)
+  # Scopes for subs and primes.
+  Sc_sub, Sc_prime = variables(V.left), variables(V.right)
+  U = S.indices[2]
+  X, Y = findall(∈(Sc_sub), U), findall(∈(Sc_prime), U)
+  # Negatives, each on the subs and primes.
+  neg = Product([learn_rpp_proj!(view(A, :, X), V.left, f, id, height + 1, P, bin, min_examples,
+                                 max_height, max_projs, max_projs, I, hyperplanes),
+                 learn_rpp_proj!(view(A, :, Y), V.right, f, id, height + 1, P, bin, min_examples,
+                                 max_height, max_projs, max_projs, I, hyperplanes)])
+  # Positives, each on the subs and primes.
+  pos = Product([learn_rpp_proj!(view(B, :, X), V.left, f, id, height + 1, P, bin, min_examples,
+                                 max_height, max_projs, max_projs, I, hyperplanes),
+                 learn_rpp_proj!(view(B, :, Y), V.right, f, id, height + 1, P, bin, min_examples,
+                                 max_height, max_projs, max_projs, I, hyperplanes)])
+  # Finally, return the resulting sum node, with same weights as the ones given to the projection.
+  return Sum([neg, pos], w)
+end
+
+function learn_rpp!(S::SubArray{<:Real, 2}, V::Vtree, f::Function, pa_id::Int, height::Int,
+    P::Vector{Projection}, bin::Bool, min_examples::Int, max_height::Int,
+    I::Vector{Tuple{Indicator, Indicator}}, gmm::Bool, pseudocount::Int)::Node
+  n, m = size(S)
+  # Single variable. Return univariate distribution.
+  if isleaf(V)
+    u = variable(V)
+    Z = reshape(S, :)#view(S, :, u)
+    if bin
+      w = (sum(Z)+pseudocount)/(n+pseudocount*2)
+      ⊥, ⊤ = I[u]
+      return Sum([⊥, ⊤], [1.0-w, w])
+    elseif gmm return learn_gmm(S[:,1], u) end
+    μ = mean(Z)
+    s = std(Z; mean = μ)
+    # This deals with NaNs, Infs and 0.
+    if !(s > 0.2) s = 0.04 else s *= s end
+    return Gaussian(u, μ, s)
+  # Small dataset or max height. Return fully factorized circuit.
+  elseif (n < min_examples) || (height > max_height)
+    @label ff
+    ch = Vector{Node}(undef, m)
+    U = S.indices[2]
+    if bin
+      W = (sum(S; dims = 1) .+ pseudocount)/(n+pseudocount*2)
+      for i ∈ 1:m
+        u, w = U[i], W[i]
+        ⊥, ⊤ = I[u]
+        ch[i] = Sum([⊥, ⊤], [1.0-w, w])
+      end
+    elseif gmm
+      for i ∈ 1:m ch[i] = learn_gmm(S[:,i], U[i]) end
+    else
+      μ = mean(S; dims = 1)
+      s = std(S; dims = 1, mean = μ)
+      map!(x -> !(x > 0.2) ? 0.04 : x*x, s, s)
+      for i ∈ 1:m ch[i] = Gaussian(U[i], μ[i], s[i]) end
+    end
+    return Product(ch)
+  end
+  # Create projection and subsequent sum node.
   a, θ, g = f(S)
   if isnothing(a) @goto ff end
   # Negatives (A) and positives (B).
@@ -55,8 +183,8 @@ function learn_rpp!(S::SubArray{<:Real, 2}, V::Vtree, f::Function, pa_id::Int, h
   k = size(A, 1)/n; w = [k, 1-k]
   # Be sure to pass w as a pointer (actually a reference) to the sum's weights so we can
   # efficiently compute during parameter learning.
-  proj = Projection(pa_id, Ref(w), a, θ)
-  push!(P, proj)
+  # proj = Projection(pa_id, Ref(w), a, θ)
+  # push!(P, proj)
   # IDs are the indeces of the parent projections.
   id = length(P)
   # Scopes for subs and primes.
@@ -64,22 +192,104 @@ function learn_rpp!(S::SubArray{<:Real, 2}, V::Vtree, f::Function, pa_id::Int, h
   U = S.indices[2]
   X, Y = findall(∈(Sc_sub), U), findall(∈(Sc_prime), U)
   # Negatives, each on the subs and primes.
-  neg = Product([learn_rpp!(view(A, :, X), V.left, f, id, height + 1, P, bin, min_examples, max_height, I),
-                 learn_rpp!(view(A, :, Y), V.right, f, id, height + 1, P, bin, min_examples, max_height, I)])
+  neg = Product([learn_rpp!(view(A, :, X), V.left, f, id, height + 1, P, bin, min_examples, max_height, I, gmm, pseudocount),
+                 learn_rpp!(view(A, :, Y), V.right, f, id, height + 1, P, bin, min_examples, max_height, I, gmm, pseudocount)])
   # Positives, each on the subs and primes.
-  pos = Product([learn_rpp!(view(B, :, X), V.left, f, id, height + 1, P, bin, min_examples, max_height, I),
-                 learn_rpp!(view(B, :, Y), V.right, f, id, height + 1, P, bin, min_examples, max_height, I)])
+  pos = Product([learn_rpp!(view(B, :, X), V.left, f, id, height + 1, P, bin, min_examples, max_height, I, gmm, pseudocount),
+                 learn_rpp!(view(B, :, Y), V.right, f, id, height + 1, P, bin, min_examples, max_height, I, gmm, pseudocount)])
   # Finally, return the resulting sum node, with same weights as the ones given to the projection.
   return Sum([neg, pos], w)
 end
 
+function learn_rpp_auto!(S::SubArray{<:Real, 2}, V::Vtree, f::Function, height::Int, bin::Bool,
+    min_examples::Int, max_height::Int, I::Vector{Tuple{Indicator, Indicator}}, gmm::Bool,
+    threshold::Float64, pseudocount::Int)::Node
+  n, m = size(S)
+  # Single variable. Return univariate distribution.
+  if isleaf(V)
+    u = variable(V)
+    Z = reshape(S, :)#view(S, :, u)
+    if bin
+      w = (sum(Z)+pseudocount)/(n+pseudocount*2)
+      ⊥, ⊤ = I[u]
+      return Sum([⊥, ⊤], [1.0-w, w])
+    elseif gmm return learn_gmm(S[:,1], u) end
+    μ = mean(Z)
+    s = std(Z; mean = μ)
+    # This deals with NaNs, Infs and 0.
+    if !(s > 0.2) s = 0.04 else s *= s end
+    return Gaussian(u, μ, s)
+  # Small dataset or max height. Return fully factorized circuit.
+  elseif (n < min_examples) || (height > max_height)
+    @label ff
+    ch = Vector{Node}(undef, m)
+    U = S.indices[2]
+    if bin
+      W = (sum(S; dims = 1) .+ pseudocount)/(n+pseudocount*2)
+      for i ∈ 1:m
+        u, w = U[i], W[i]
+        ⊥, ⊤ = I[u]
+        ch[i] = Sum([⊥, ⊤], [1.0-w, w])
+      end
+    elseif gmm
+      for i ∈ 1:m ch[i] = learn_gmm(S[:,i], U[i]) end
+    else
+      μ = mean(S; dims = 1)
+      s = std(S; dims = 1, mean = μ)
+      map!(x -> !(x > 0.2) ? 0.04 : x*x, s, s)
+      for i ∈ 1:m ch[i] = Gaussian(U[i], μ[i], s[i]) end
+    end
+    return Product(ch)
+  end
+  if avgdiam(S) < threshold
+    a, θ, g = f(S)
+    if isnothing(a) @goto ff end
+    A, B = select(g, S)
+    k = (size(A, 1)+pseudocount)/(n+pseudocount*2); w = [k, 1-k]
+    return Sum([learn_rpp_auto!(A, V, f, height+1, bin, min_examples, max_height, I, gmm, threshold, pseudocount),
+                learn_rpp_auto!(B, V, f, height+1, bin, min_examples, max_height, I, gmm, threshold, pseudocount)], w)
+  end
+  Sc_sub, Sc_prime = variables(V.left), variables(V.right)
+  U = S.indices[2]
+  X, Y = findall(∈(Sc_sub), U), findall(∈(Sc_prime), U)
+  return Product([learn_rpp_auto!(view(S, :, X), V.left, f, height+1, bin, min_examples, max_height, I, gmm, threshold, pseudocount),
+                  learn_rpp_auto!(view(S, :, Y), V.right, f, height+1, bin, min_examples, max_height, I, gmm, threshold, pseudocount)])
+end
+
+@inline sample_thresholds(D::AbstractMatrix{<:Real}, n::Int)::Vector{Float64} = ((rand(n)/2) .+ 0.5) * avgdiam(D) * 3
+@inline equal_thresholds(D::AbstractMatrix{<:Real}, n::Int)::Vector{Float64} = collect(0.0:1.0/(n-1):1.0) * avgdiam(D)
+
+function learn_rpp_auto(D::AbstractMatrix{<:Real}, V::Vtree; split::Symbol = :max, c::Real = 1.0,
+    r::Real = 2.0, trials::Int = 10, bin::Bool = true, min_examples::Int = 30, max_height::Int =
+    10, I::Vector{Tuple{Indicator, Indicator}} = bin ? [(Indicator(u, 0), Indicator(u, 1)) for u ∈ 1:size(D, 2)] : Tuple{Indicator, Indicator}[],
+    gmm::Bool = false, samples::Int = 10, validation::AbstractMatrix{<:Real} = D,
+    pseudocount::Int = 2, kwargs...)
+  f = split == :max ? (x -> max_rulep(x, r, trials)) : (x -> sid_rulep(x, c, trials))
+  # R = Vector{Node}(undef, samples)
+  # T = equal_thresholds(D, samples)
+  # Threads.@threads for i ∈ 1:samples
+    # R[i] = learn_rpp_auto!(view(D, :, :), V, f, -1, bin, min_examples, max_height, I, gmm, T[i], pseudocount)
+  # end
+  # L = NLL.(R, Ref(validation))
+  # t = argmin(L)
+  # display(L)
+  # println("\nBest threshold: ", T[t])
+  # display(T); println()
+  # mini_em(R[t], D; validation, learngaussians = !bin, kwargs...)
+  # return R[t]
+  return learn_rpp_auto!(view(D, :, :), V, f, -1, bin, min_examples, max_height, I, gmm, 0.5*avgdiam(D), pseudocount)
+end
+export learn_rpp_auto
+
 """Learns a PC by projections and returns the root and a vector with all projections."""
 function learn_rpp(D::AbstractMatrix{<:Real}, V::Vtree; split::Symbol = :max, c::Real = 1.0, r::Real = 2.0,
     trials::Int = 10, bin::Bool = true, min_examples::Int = 30, max_height::Int = 10,
-    I::Vector{Tuple{Indicator, Indicator}} = bin ? [(Indicator(u, 0), Indicator(u, 1)) for u ∈ 1:size(D, 2)] : Tuple{Indicator, Indicator}[])::Tuple{Node, Vector{Projection}}
+    I::Vector{Tuple{Indicator, Indicator}} = bin ? [(Indicator(u, 0), Indicator(u, 1)) for u ∈ 1:size(D, 2)] : Tuple{Indicator, Indicator}[],
+    max_projs::Int = 0, gmm::Bool = false, pseudocount::Int = 2)::Tuple{Node, Vector{Projection}}
   f = split == :max ? (x -> max_rulep(x, r, trials)) : (x -> sid_rulep(x, c, trials))
   P = Vector{Projection}()
-  r = learn_rpp!(view(D, :, :), V, f, -1, 1, P, bin, min_examples, max_height, I)
+  r = max_projs > 0 ? learn_rpp_proj!(view(D, :, :), V, f, -1, 1, P, bin, min_examples, max_height, max_projs, max_projs, I, Vector{Function}()) :
+                      learn_rpp!(view(D, :, :), V, f, -1, 1, P, bin, min_examples, max_height, I, gmm, pseudocount)
   return r, P
 end
 export learn_rpp
@@ -184,48 +394,55 @@ function prune!(r::Node, D::AbstractMatrix{<:Real}, n::Int; em_steps::Integer = 
 end
 
 function mini_em(C::Node, D::AbstractMatrix{<:Real}; steps::Integer = 10, decay::Real = 0.975,
-    batch_size::Integer = 500, validation::AbstractMatrix{<:Real} = D)::Float64
+    batch_size::Integer = 500, validation::AbstractMatrix{<:Real} = D, smoothing::Float64 = 0.05,
+    learngaussians::Bool = false, minimumvariance::Float64 = 0.5)::Float64
   n = size(D, 1)
-  L = SEM(C)
+  L = SEM(C; gauss = learngaussians)
   indices = shuffle!(collect(1:n))
   η = decay
   while L.steps < steps
     sid = rand(1:(length(indices)-batch_size))
     batch = view(D, indices[sid:(sid+batch_size-1)], :)
     η *= decay
-    update(L, batch, η; verbose = true, validation)
+    update(L, batch, η, smoothing, learngaussians, minimumvariance; verbose = true, validation)
   end
   return pNLL(L.circ.V, L.circ.C, L.circ.L, validation)
 end
 
 function ensemble(D::AbstractMatrix{<:Real}, k::Integer; em_steps::Integer = 10, batch_size::Integer = 500,
     max_diff::Real = 0.1, bin::Bool = true, decay::Real = 0.975, validation::AbstractMatrix{<:Real} = D,
-    strategy::Symbol = :em, kwargs...)::Node
+    strategy::Symbol = :em, smoothing::Float64 = 0.05, learngaussians::Bool = false,
+    minimumvariance::Float64 = 0.5, learnvtree::Bool = true, kwargs...)::Node
   n, m = size(D)
   i = 1
   K = Vector{Node}(undef, k)
   LL = Vector{Float64}(undef, k)
   I = bin ? [(Indicator(u, 0), Indicator(u, 1)) for u ∈ 1:m] : Tuple{Indicator, Indicator}[]
   println("Learning initial components...")
-  D_df = DataFrame(D, :auto)
+  if bin D_df = DataFrame(D, :auto) end
   best = Threads.Atomic{Float64}(Inf)
   threshold = 1.0+max_diff
   @qthreads for i ∈ 1:k
     ll = 0
-    while (ll == 0) || (ll/best[] > threshold)
+    # while (ll == 0) || (ll/best[] > threshold)
       println("  Retry ", i, "...\n  Learning vtree ", i, "...")
-      V = learn_vtree(D_df; alg = rand((:bottomup, :topdown)))
+      if learnvtree
+        V = bin ? learn_vtree(D_df; alg = rand((:bottomup, :topdown))) : learn_vtree_cont(D; alg = :topdown)
+      else
+        V = Vtree(m, :random)
+      end
       println("  Learning circuit ", i, "...")
       K[i], _ = learn_rpp(D, V; bin, I, kwargs...)
-      ll = NLL(K[i], validation)
-      Threads.atomic_min!(best, ll)
-    end
+      # ll = NLL(K[i], validation)
+      # Threads.atomic_min!(best, ll)
+    # end
     println("  Found suitable candidate for ", i)
   end
   if strategy != :stack
     # best = Inf
     for i ∈ 1:k
-      nll = mini_em(K[i], D; steps = em_steps, decay, batch_size, validation)
+      nll = mini_em(K[i], D; steps = em_steps, decay, batch_size, validation, smoothing,
+                    learngaussians, minimumvariance)
       LL[i] = nll
       # if nll < best best = nll end
     end
@@ -248,7 +465,10 @@ function ensemble(D::AbstractMatrix{<:Real}, k::Integer; em_steps::Integer = 10,
   println("Computing strategy...")
   if strategy == :em learn_mix_em!(S, D; steps = 100)
   elseif strategy == :stack learn_mix_stack!(S, D; v = 10, steps = 10, validation)
-  elseif strategy == :llw learn_mix_llw!(S, D) end
+  elseif strategy == :llw learn_mix_llw!(S, D)
+  elseif strategy == :fullem
+    mini_em(S, D; batch_size, validation, smoothing, learngaussians, minimumvariance, steps = 100)
+  end
   return S
 end
 export ensemble
@@ -329,7 +549,8 @@ mutable struct BMC
   "Constructs a BMC with q*t combinations, each with n models."
   function BMC(n::Int, D::AbstractMatrix{<:Real}, q::Int, t::Int;
       α::Union{Vector{Float64}, Nothing} = nothing, reuse::Union{Vector{Node}, Nothing} = nothing,
-      validation::AbstractMatrix{<:Real} = D, bin::Bool = true, kwargs...)::ModelComb
+      validation::AbstractMatrix{<:Real} = D, bin::Bool = true, smoothing::Float64 = 0.05,
+      learngaussians::Bool = false, minimumvariance::Float64 = 0.5, kwargs...)::ModelComb
     if isnothing(α) α = ones(n) end
     K = q*t
     M = K*n
@@ -342,7 +563,7 @@ mutable struct BMC
         circs[i], _ = learn_rpp(D, learn_vtree(D_df; alg = rand((:bottomup, :topdown))); bin,
                                 I, kwargs...)
       end
-      for i ∈ 1:M mini_em(circs[i], D; steps = 6, validation) end
+      for i ∈ 1:M mini_em(circs[i], D; steps = 6, validation, smoothing, learngaussians, minimumvariance) end
     else circs = reuse end
     E = Vector{Node}(undef, K)
     dirichlet = Dirichlet(α)
