@@ -27,7 +27,7 @@ function top_down_v(data::DataFrame, M::Matrix; α)
     n, m = size(data)
 
     weight=ones(Float64, n)
-    C = cor(M)
+    C = abs.(cor(M))
     vars = UInt32.(collect(1:m))
     info = ProbabilisticCircuits.to_long_mi(C, MIN_INT, MAX_INT)
 
@@ -56,7 +56,7 @@ end
 function bottom_up_v(data::DataFrame, M::Matrix; α)
     n, m = size(data)
     weight = ones(Float64, n)
-    C = cor(M)
+    C = abs.(cor(M))
     vars = UInt32.(collect(1:m))
     info = round.(Int64, 1000001 .+ ProbabilisticCircuits.to_long_mi(C, -1, -1000000))
 
