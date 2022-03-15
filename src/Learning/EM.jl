@@ -62,10 +62,7 @@ function update(
     gs = learner.circ.gauss
     gaussiannodes = gs.G
     if length(gaussiannodes) > 0
-        means = gs.μ
-        squares = gs.squares
-        denon = gs.denon
-        foreach(x -> (means[x] = 0.0; squares[x] = 0.0; denon[x] = 0.0), gaussiannodes)
+        Δ = Dict{UInt, Vector{Float64}}(x => Vector{Float64}(undef, numrows) for x ∈ gaussiannodes)
     end
   end
   diff = learner.circ.D
@@ -103,11 +100,7 @@ function update(
     end
     if learngaussians
       Threads.@threads for n in gaussiannodes
-        α = diff[n]*exp(values[n]-lv)
-        u = datum[curr[n].scope]
-        denon[n] += α
-        means[n] += α*u
-        squares[n] += α*u*u
+        Δ[n][t] = log(diff[n])+(values[n]-lv)
       end
     end
   end
@@ -132,15 +125,20 @@ function update(
       # online update: θ[t+1] = (1-η)*θ[t] + η*update(θ[t])
       # @assert !isnan(learningrate*means[n]/denon[n] + (1-learningrate)*cg.mean)
       # @assert !isnan(learningrate*(squares[n]/denon[n] - (p.mean)^2) + (1-learningrate)*cg.variance)
-      mean_u = learningrate*means[n]/denon[n] + (1-learningrate)*cg.mean
-      if isnan(mean_u) mean_u = learningrate*means[n] + (1-learningrate)*cg.mean end
-      var_u = learningrate*(squares[n]/denon[n] - (p.mean)^2) + (1-learningrate)*cg.variance
-      if isnan(var_u) var_u = learningrate*(squares[n]-(p.mean*p.mean))+(1-learningrate)*cg.variance end
+      # mean_u = learningrate*means[n]/denon[n] + (1-learningrate)*cg.mean
+      α = Δ[n]
+      α .= exp.(α .- logsumexp(α))
+      X = view(Data, :, p.scope)
+      mean_u = learningrate*sum(α .* X) + (1-learningrate)*cg.mean
+      var_u = learningrate*sum(α .* ((X .- mean_u) .^ 2)) + (1-learningrate)*cg.variance
+      # if isnan(mean_u) mean_u = learningrate*means[n] + (1-learningrate)*cg.mean end
+      # var_u = learningrate*(squares[n]/denon[n]-2*means[n]/denon[n]+mean_u^2) + (1-learningrate)*cg.variance
+      # if isnan(var_u) var_u = learningrate*(squares[n]-(p.mean*p.mean))+(1-learningrate)*cg.variance end
       if !(isnan(mean_u) || isnan(var_u))
         @inbounds p.mean = mean_u
         @inbounds p.variance = var_u
-        if !(p.variance > minimumvariance) p.variance = minimumvariance end
       end
+      if !(p.variance > minimumvariance) p.variance = minimumvariance end
     end
   end
 
