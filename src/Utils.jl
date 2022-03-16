@@ -22,7 +22,7 @@ end
 #     we .*= 1/s
 # end
 
-"""
+#="""
   logsumexp(x)
 
 Returns `log(sum(exp.(x)))`. Uses a numerically stable algorithm.
@@ -37,7 +37,9 @@ function logsumexp(x::AbstractVector{<:Real})
   w = exp.(x .- offset) # Note: maximum(w) = 1
   Σ = sum_all_but(w, maxind) # Σ = sum(w)-1
   return log1p(Σ) + offset #, Σ+1 # log1p controls for underflow
-end
+end=#
+
+using StatsFuns: logsumexp
 
 """
     sum_all_but(x,i)

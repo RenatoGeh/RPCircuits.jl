@@ -63,6 +63,48 @@ function backpropagate!(diff::Vector{Float64}, circ::Vector{Node}, values::Vecto
   return nothing
 end
 
+function backpropagate_tree!(Δ::AbstractMatrix{<:Real}, C::Vector{Node}, V::AbstractMatrix{<:Real})
+  Δ[:,end] .= 0.0
+  n, m = size(Δ)
+  contains_indicators = false
+  # Columns: nodes
+  for i ∈ m:-1:1 # from root to leaves
+    N = C[i]
+    d = view(Δ, :, i)
+    if isleaf(N) continue end
+    if issum(N)
+      for (j, c) ∈ enumerate(N.children)
+        if C[c] isa Indicator
+          # Indicator nodes are computed differently, since they may repeat (and so the structure is not
+          # tree-shaped). Compute in normal space so as to minimize numerical errors.
+          constains_indicators = true
+          Δ[:,c] .+= N.weights[j] * exp(d)
+        else
+          Δ[:,c] .= log(N.weights[j]) .+ d
+        end
+      end
+    elseif isprod(N)
+      v = view(V, :, i)
+      for c ∈ N.children
+        δ = d .+ v .- view(V, :, c)
+        δ[isinf.(δ)] .= -floatmax(Float64)
+        if C[c] isa Indicator
+          contains_indicators = true
+          Δ[:,c] .*= exp.(δ)
+        else
+          Δ[:,c] .= δ
+        end
+      end
+    end
+  end
+  if contains_indicators
+    for i ∈ 1:m
+      (C[i] isa Indicator) && (Δ[:,i] .= log.(view(Δ, :, i)))
+    end
+  end
+  return nothing
+end
+
 function backpropagate_tree!(diff::Vector{Float64}, circ::Vector{Node}, layers::Vector{Vector{UInt}}, values::Vector{Float64})
   fill!(diff, 0.0)
   @inbounds diff[end] = 1.0

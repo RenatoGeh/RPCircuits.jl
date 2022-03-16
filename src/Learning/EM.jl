@@ -59,101 +59,68 @@ function update(
   score = 0.0
   sumnodes = learner.circ.S
   if learngaussians
-    gs = learner.circ.gauss
-    gaussiannodes = gs.G
-    if length(gaussiannodes) > 0
-        Δ = Dict{UInt, Vector{Float64}}(x => Vector{Float64}(undef, numrows) for x ∈ gaussiannodes)
-    end
+    gaussiannodes = learner.circ.gauss.G
   end
-  diff = learner.circ.D
-  values = learner.circ.V
 
-  # TODO beter exploit multithreading
-  # Compute expected weights
-  for t in 1:numrows
-    datum = view(Data, t, :)
-    #lv = logpdf!(values,circ,datum) # propagate input Data[i,:]
-    lv = cplogpdf!(values, curr, learner.circ.L, datum) # parallelized version
-    @assert isfinite(lv) "logvalue of datum $t is not finite: $lv"
-    score += lv
-    #TODO: implement multithreaded version of backpropagate
-    # backpropagate!(diff, curr, values) # backpropagate derivatives
-    # If tree, parallelize by layers
-    backpropagate_tree!(diff, curr, learner.circ.L, values)
-    Threads.@threads for l in 1:length(sumnodes) # update each node in parallel
-      i = sumnodes[l]
-      n = curr[i]
-      p = prev[i]
-      @inbounds for (j, c) in enumerate(n.children)
-        # @assert isfinite(diff[i]) "derivative of node $i is not finite: $(diff[i])"
-        # @assert !isnan(values[j]) "value of node $j is NaN: $(values[j])"
-        u = values[c]
-        if isfinite(u)
-          δ = n.weights[j] * diff[i] * exp(u - lv) # improvement
-          # @assert isfinite(δ) "improvement to weight ($i,$j):$(circ_p[i].weights[k]) is not finite: $δ, $(diff[i]), $(values[j]), $(exp(values[j]-lv))"
-          if !isfinite(δ) δ = 0.0 end
-        else
-          δ = 0.0
-        end
-        p.weights[j] = ((t - 1) / t) * p.weights[j] + δ / t # running average for improved precision
-      end
+  V = Matrix{Float64}(undef, numrows, length(curr))
+  Δ = Matrix{Float64}(undef, numrows, length(curr))
+
+  # Compute backward pass (values)
+  LL = mlogpdf!(V, curr, Data)
+  # Compute forward pass (derivatives)
+  backpropagate_tree!(Δ, curr, V)
+  if !isnothing(findfirst(isnan, LL)) || !isnothing(findfirst(isnan, Δ)) return -2, V, Δ end
+
+  # Update sum weights
+  Threads.@threads for i ∈ 1:length(sumnodes)
+    s = sumnodes[i]
+    S, Z = curr[s], prev[s]
+    β = Vector{Float64}(undef, length(S.children))
+    for (j, c) ∈ enumerate(S.children)
+      β[j] = log(S.weights[j]) + logsumexp(view(Δ, :, s) .+ view(V, :, c) .- LL)
     end
-    if learngaussians
-      Threads.@threads for n in gaussiannodes
-        Δ[n][t] = log(diff[n])+(values[n]-lv)
-      end
-    end
+    u = exp.(β .- logsumexp(β))# .+ smoothing
+    # u ./= sum(u)
+    # u .= learningrate .* u .+ (1.0-learningrate) .* Z.weights
+    S.weights .= u# ./ sum(u)
   end
-  # Do update
-  # TODO: implement momentum acceleration (nesterov acceleration, Adam, etc)
-  # newweights =  log.(newweights) .+ maxweights
-  Threads.@threads for i in 1:length(sumnodes)
-    j = sumnodes[i]
-    n = curr[j]
-    p = prev[j]
-    p.weights .+= smoothing / length(p.weights) # smoothing factor to prevent degenerate probabilities
-    p.weights .*= learningrate / sum(p.weights) # normalize weights
-    # online update: θ[t+1] = (1-η)*θ[t] + η*update(θ[t])
-    p.weights .+= (1.0 - learningrate) * n.weights
-    p.weights ./= sum(p.weights)
-    # @assert sum(circ_n[i].weights) ≈ 1.0 "Unnormalized weight vector at node $i: $(sum(circ_n[i].weights)) | $(circ_n[i].weights) | $(circ_p[i].weights)"
-  end
+
+  # Update Gaussian parameters
   if learngaussians
-    Threads.@threads for n in gaussiannodes
-      p = prev[n]
-      cg = curr[n]
-      # online update: θ[t+1] = (1-η)*θ[t] + η*update(θ[t])
-      # @assert !isnan(learningrate*means[n]/denon[n] + (1-learningrate)*cg.mean)
-      # @assert !isnan(learningrate*(squares[n]/denon[n] - (p.mean)^2) + (1-learningrate)*cg.variance)
-      # mean_u = learningrate*means[n]/denon[n] + (1-learningrate)*cg.mean
-      α = Δ[n]
+    mean_u, var_u = Vector{Float64}(undef, length(gaussiannodes)), Vector{Float64}(undef, length(gaussiannodes))
+    Threads.@threads for i ∈ 1:length(gaussiannodes)
+      g = gaussiannodes[i]
+      G, H = curr[g], prev[g]
+      α = view(Δ, :, g) .+ view(V, :, g) .- LL
       α .= exp.(α .- logsumexp(α))
-      X = view(Data, :, p.scope)
-      mean_u = learningrate*sum(α .* X) + (1-learningrate)*cg.mean
-      var_u = learningrate*sum(α .* ((X .- mean_u) .^ 2)) + (1-learningrate)*cg.variance
-      # if isnan(mean_u) mean_u = learningrate*means[n] + (1-learningrate)*cg.mean end
-      # var_u = learningrate*(squares[n]/denon[n]-2*means[n]/denon[n]+mean_u^2) + (1-learningrate)*cg.variance
-      # if isnan(var_u) var_u = learningrate*(squares[n]-(p.mean*p.mean))+(1-learningrate)*cg.variance end
-      if !(isnan(mean_u) || isnan(var_u))
-        @inbounds p.mean = mean_u
-        @inbounds p.variance = var_u
-      end
-      if !(p.variance > minimumvariance) p.variance = minimumvariance end
+      X = view(Data, :, G.scope)
+      mean_u[i], var_u[i] = learningrate*sum(α .* X) + (1-learningrate)*H.mean, learningrate*sum(α .* ((X .- G.mean) .^ 2)) + (1-learningrate)*H.variance
+      # G.mean = learningrate*sum(α .* X) + (1-learningrate)*H.mean
+      # G.variance = learningrate*sum(α .* ((X .- G.mean) .^ 2)) + (1-learningrate)*H.variance
+      # !(G.variance > minimumvariance) && (G.variance = minimumvariance)
+    end
+    if !isnothing(findfirst(isnan, mean_u)) || !isnothing(findfirst(isnan, var_u)) return -1, V, Δ end
+    for i ∈ 1:length(gaussiannodes)
+      G = curr[gaussiannodes[i]]
+      G.mean, G.variance = mean_u[i], var_u[i]
+      !(G.variance > minimumvariance) && (G.variance = minimumvariance)
     end
   end
 
   if verbose && (learner.steps % 2 == 0)
-    ll = pNLL(values, curr, learner.circ.L, validation)
+    print("Training LL: ", sum(LL)/numrows, " | ")
+    ll = pNLL(LL, curr, learner.circ.L, validation)
     if !isnothing(history) push!(history, ll) end
     println("Iteration $(learner.steps). η: $(learningrate), NLL: $(ll)")
   end
 
+  score = sum(LL)
   swap!(learner.circ)
   learner.steps += 1
   learner.prevscore = learner.score
   learner.score = -score / numrows
 
-  return learner.prevscore - learner.score
+  return learner.prevscore - learner.score, V, Δ
 end
 export update
 

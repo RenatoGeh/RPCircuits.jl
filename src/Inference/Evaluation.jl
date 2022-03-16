@@ -126,8 +126,25 @@ logpdf(S, [NaN, 2])
 """
 logpdf(r::Node, x::AbstractVector{<:Real})::Float64 = logpdf!(Dict{Node, Float64}(), nodes(r; rev = false), x)
 
+"Vectorized form of cplogpdf."
+function mlogpdf!(V::AbstractMatrix{<:Real}, C::Vector{Node}, D::AbstractMatrix{<:Real})
+  n, k = size(V)
+  # Columns: nodes
+  @inbounds for i ∈ 1:k # from leaves to root
+    N = C[i]
+    if isprod(N)
+      @inbounds V[:,i] .= sum.(eachrow(view(V, :, N.children)))
+    elseif issum(N)
+      @inbounds V[:,i] .= logsumexp.(eachrow(log.(N.weights)' .+ view(V, :, N.children)))
+    else # is leaf
+      @inbounds V[:,i] .= logpdf.(N, view(D, :, N.scope))
+    end
+  end
+  return view(V, :, k)
+end
+
 function cplogpdf!(
-    V::Vector{Float64},
+    V::AbstractVector{Float64},
     N::Vector{Node},
     nlayers::Vector{Vector{UInt}},
     x::AbstractVector{<:Real},
@@ -391,7 +408,7 @@ Computes the average negative loglikelihood of a dataset `data` assigned by circ
 """
 NLL(r::Node, data::AbstractMatrix{<:Real}) = -logpdf(r, data) / size(data, 1)
 """Computes the NLL by parallelizing the circuit instead of instances."""
-@inline function pNLL(V::Vector{Float64}, N::Vector{Node}, L::Vector{Vector{UInt}}, D::AbstractMatrix{<:Real})::Float64
+@inline function pNLL(V::AbstractVector{Float64}, N::Vector{Node}, L::Vector{Vector{UInt}}, D::AbstractMatrix{<:Real})::Float64
   n = size(D, 1)
   return -sum(cplogpdf!(V, N, L, view(D, i, :)) for i in 1:n)/n
 end

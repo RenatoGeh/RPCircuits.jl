@@ -76,7 +76,7 @@ function modalEM(
 end
 export modalEM
 
-"""
+#="""
 Simple logsumexp.
 
 Source: https://github.com/probcomp/LogSumExp.jl/blob/main/src/LogSumExp.jl
@@ -84,4 +84,4 @@ Source: https://github.com/probcomp/LogSumExp.jl/blob/main/src/LogSumExp.jl
 function logsumexp(a::AbstractArray{<:Real}; dims::Union{Integer, Dims, Colon} = :)
   m = maximum(a; dims = dims)
   return m + log.(sum(exp.(a .- m); dims = dims))
-end
+end=#

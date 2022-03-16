@@ -27,6 +27,7 @@ Learns a multivariate Gaussian mixture model with `k` components from data `D`.
 function learn_multi_gmm(D::AbstractMatrix{<:Real}; k::Int = 3, kmeans_iter::Int = 50,
     em_iter::Int = 100, smoothing::Float64 = 0.1, minvar::Float64 = 1e-3, verbose::Bool = true,
     validation::AbstractMatrix{<:Real} = D)::Node
+  println("Finding initial means and variances...")
   gmm = GaussianMixtures.GMM(k, D; kind = :diag, method = :kmeans, nInit = kmeans_iter, nIter = 0)
   gmm.w .= rand(k)
   gmm.w ./= sum(gmm.w)
@@ -37,13 +38,15 @@ function learn_multi_gmm(D::AbstractMatrix{<:Real}; k::Int = 3, kmeans_iter::Int
   μ = GaussianMixtures.means(gmm)
   Σ = GaussianMixtures.covars(gmm)
   n, m = size(D)
+  println("Constructing GMM structure...")
   K = Vector{Node}(undef, k)
   for i ∈ 1:k
-    G = [Gaussian(j, μ[i,j], Σ[i,j]) for j ∈ 1:m]
+    G = [Gaussian(j, μ[i,j], Σ[i,j] < minvar ? minvar : Σ[i,j]) for j ∈ 1:m]
     K[i] = Product(G)
   end
   C = Sum(K, w)
   # println("Initial LL: ", -NLL(C, validation))
+  println("Learning weights...")
   L = SEM(C; gauss = true)
   while L.steps < em_iter
     # print("Training LL: ", -NLL(C, D), " -> ")
