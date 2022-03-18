@@ -126,6 +126,29 @@ logpdf(S, [NaN, 2])
 """
 logpdf(r::Node, x::AbstractVector{<:Real})::Float64 = logpdf!(Dict{Node, Float64}(), nodes(r; rev = false), x)
 
+mLL!(V::AbstractMatrix{<:Real}, N::Vector{Node}, D::AbstractMatrix{<:Real})::Float64 = sum(mplogpdf!(V, N, D))/size(D, 1)
+
+"Parallelized vectorized form of cplogpdf."
+function mplogpdf!(V::AbstractMatrix{<:Real}, C::Vector{Node}, D::AbstractMatrix{<:Real})
+  n, k = size(V)
+  I = prepare_indices(n)
+  Threads.@threads for j ∈ 1:length(I)
+    R = I[j]
+    # Columns: nodes
+    @inbounds for i ∈ 1:k # from leaves to root
+      N = C[i]
+      if isprod(N)
+        @inbounds V[R,i] .= sum.(eachrow(view(V, R, N.children)))
+      elseif issum(N)
+        @inbounds V[R,i] .= logsumexp.(eachrow(log.(N.weights)' .+ view(V, R, N.children)))
+      else # is leaf
+        @inbounds V[R,i] .= logpdf.(N, view(D, R, N.scope))
+      end
+    end
+  end
+  return view(V, :, k)
+end
+
 "Vectorized form of cplogpdf."
 function mlogpdf!(V::AbstractMatrix{<:Real}, C::Vector{Node}, D::AbstractMatrix{<:Real})
   n, k = size(V)

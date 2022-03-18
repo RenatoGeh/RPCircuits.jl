@@ -283,245 +283,55 @@ function learn_projections(
   S::AbstractMatrix{<:Real};
   c::Real = 1.0,
   r::Real = 2.0,
+  split::Symbol = :max,
+  trials::Integer = 10,
   n_projs::Integer = 3,
   t_proj::Symbol = :max,
-  max_height::Integer = -1,
+  max_height::Integer = typemax(Int),
   min_examples::Integer = 30,
-  binarize::Bool = false,
   t_mix::Symbol = :all,
-  no_dist::Bool = true,
-  trials::Integer = 5,
-  dense_leaves::Bool = false,
-  pseudocount::Integer = 1
 )::Node
   n, m = size(S)
   if max_height < 0 max_height = floor(Int, sqrt(n)) end
-  if !no_dist
-    upper = Matrix{Float64}(undef, n, n)
-    Threads.@threads for i in 1:n
-      @inbounds upper[i,i] = 0
-      for j in i+1:n
-        @inbounds upper[i, j] = norm(S[i, :] - S[j, :])
-      end
-    end
-    D = Symmetric(upper, :U)
-  else
-    D = nothing
-  end
-  if t_mix == :single learn_func = learn_only_projections!
-  elseif t_mix == :alt learn_func = learn_alt_projections!
-  else learn_func = learn_projections! end
-  if t_proj == :mean
-    r = learn_func(S, D, n_projs, max_height, min_examples, binarize, dense_leaves, pseudocount,
-                   (x, y) -> mean_rule(x, y, c))
-  elseif t_proj == :max
-    r = learn_func(S, D, n_projs, max_height, min_examples, binarize, dense_leaves, pseudocount,
-                   (x, y) -> max_rule(x, r, trials))
-  else
-    r = learn_func(S, D, n_projs, max_height, min_examples, binarize, dense_leaves, pseudocount,
-                   (x, y) -> sid_rule(x, c, trials))
-  end
-  return r
+  f = split == :max ? (x -> max_rulep(x, r, trials)) : (x -> sid_rulep(x, c, trials))
+  return t_mix == :all ? learn_projections_all!(S, n_projs, f, 0, max_height, min_examples) : learn_projections_single!(S, f, 0, max_height, min_examples)
 end
 export learn_projections
 
-function learn_only_projections!(
-  S::AbstractMatrix{<:Real},
-  D::Union{AbstractMatrix{Float64}, Nothing},
-  n_projs::Int,
-  max_height::Int,
-  min_examples::Int,
-  binarize::Bool,
-  dense_leaves::Bool,
-  pseudocount::Int,
-  t_rule::Function
-)::Node
-  n_count = 1
-  n = size(S, 2)
-  ⊥, ⊤ = indicators(1:n)
-  root = Sum(Vector{Node}(undef, n_projs), fill(1/n_projs, n_projs))
-  Q = Vector{Tuple{AbstractMatrix{<:Real}, Union{AbstractMatrix{Float64}, Nothing}, Node, Int}}()
+function learn_projections_all!(D::AbstractMatrix{<:Real}, n_projs::Integer, f::Function,
+    height::Integer, max_height::Integer, min_examples::Integer)::Node
+  n, m = size(D)
+  if (height > max_height) || (n < min_examples)
+    @label ff
+    μ = mean(D; dims = 1)
+    σ = std(D; dims = 1, mean = μ)
+    return Product([Gaussian(i, μ[i], !(σ[i] > 0.03) ? 1e-3 : σ[i]^2) for i ∈ 1:m])
+  end
+  Ch = Vector{Node}(undef, n_projs)
   for i ∈ 1:n_projs
-    s = Sum(2)
-    root.children[i] = s
-    push!(Q, (S, D, s, 0))
+    a, _, g = f(D)
+    if isnothing(a) @goto ff end
+    A, B = select(g, D)
+    k = size(A, 1)/n; w = [k, 1-k]
+    Ch[i] = Sum([learn_projections_all!(A, n_projs, f, height + 1, max_height, min_examples),
+                 learn_projections_all!(B, n_projs, f, height + 1, max_height, min_examples)], w)
   end
-  while !isempty(Q)
-    data, dists, Σ, n_height = popfirst!(Q)
-    m = size(data, 1)
-    n_height += 1
-    R = t_rule(data, dists)
-    λ = 0
-    I, J = Vector{Int}(), Vector{Int}()
-    r_I, r_J = nothing, nothing
-    same_I, same_J = true, true
-    for (j, x) in enumerate(eachrow(data))
-      if R(x)
-        λ += 1
-        push!(I, j)
-        if isnothing(r_I) r_I = x
-        elseif same_I same_I = (r_I == x) end
-      else
-        push!(J, j)
-        if isnothing(r_J) r_J = x
-        elseif same_J same_J = (r_J == x) end
-      end
-    end
-    λ /= m
-    factorize_pos_sub = (n_height > max_height) || (length(I) < min_examples) || same_I
-    factorize_neg_sub = (n_height > max_height) || (length(J) < min_examples) || same_J
-    pos_data = view(data, I, :)
-    neg_data = view(data, J, :)
-    Σ.weights[1], Σ.weights[2] = λ, 1.0-λ
-    if dense_leaves
-      if factorize_pos_sub
-        pos = sample_dense(pos_data, collect(1:n), 1, 3, 2, 2, 2; binary = binarize,
-                             pseudocount = pseudocount)
-      else pos = Sum(2) end
-      Σ.children[1] = pos
-      if factorize_neg_sub
-        neg = sample_dense(neg_data, collect(1:n), 1, 3, 2, 2, 2; binary = binarize,
-                           pseudocount = pseudocount)
-      else neg = Sum(2) end
-      Σ.children[2] = neg
-    else
-      pos = factorize_pos_sub ? Product(n) : Sum(2)
-      neg = factorize_neg_sub ? Product(n) : Sum(2)
-      Σ.children[1], Σ.children[2] = pos, neg
-    end
-    if !dense_leaves && factorize_pos_sub
-      if binarize
-        θ = vec(sum(pos_data; dims = 1)) / length(I)
-      else
-        μ = mean(pos_data; dims = 1)
-        σ = std(pos_data; dims = 1)
-      end
-      for j in 1:n
-        if binarize pos.children[j] = Sum([⊥[j], ⊤[j]], [1-θ[j], θ[j]])
-        else pos.children[j] = Gaussian(j, μ[j], isnan(σ[j]) || σ[j] == 0 ? 0.05 : σ[j]*σ[j]) end
-      end
-    elseif !factorize_pos_sub
-      pos_dists = isnothing(dists) ? nothing : view(dists, I, I)
-      push!(Q, (pos_data, pos_dists, pos, n_height))
-    end
-    if !dense_leaves && factorize_neg_sub
-      if binarize
-        θ = vec(sum(neg_data; dims = 1)) / length(J)
-      else
-        μ = mean(neg_data; dims = 1)
-        σ = std(neg_data; dims = 1)
-      end
-      for j in 1:n
-        if binarize neg.children[j] = Sum([⊥[j], ⊤[j]], [1-θ[j], θ[j]])
-        else neg.children[j] = Gaussian(j, μ[j], isnan(σ[j]) || σ[j] == 0 ? 0.05 : σ[j]*σ[j]) end
-      end
-    elseif !factorize_neg_sub
-      neg_dists = isnothing(dists) ? nothing : view(dists, J, J)
-      push!(Q, (neg_data, neg_dists, neg, n_height))
-    end
-  end
-  return root
+  return Sum(Ch, fill(1/n_projs, n_projs))
 end
 
-function learn_projections!(
-  S::AbstractMatrix{<:Real},
-  D::Union{AbstractMatrix{Float64}, Nothing},
-  n_projs::Int,
-  max_height::Int,
-  min_examples::Int,
-  binarize::Bool,
-  dense_leaves::Bool,
-  pseudocount::Int,
-  t_rule::Function
-)::Node
-  c_weight = 1.0/n_projs
-  n = size(S, 2)
-  ⊥, ⊤ = indicators(1:n)
-  root = Sum(n_projs)
-  Q = Tuple{AbstractMatrix{<:Real}, Union{AbstractMatrix{Float64}, Nothing}, Node, Int}[(S, D, root, 0)]
-  while !isempty(Q)
-    data, dists, Σ, n_height = popfirst!(Q)
-    m = size(data, 1)
-    n_height += 1
-    # push!(C, Σ)
-    Ch = Σ.children
-    Σ.weights .= fill(c_weight, n_projs)
-    for i in 1:n_projs
-      R = t_rule(data, dists)
-      λ = 0
-      I, J = Vector{Int}(), Vector{Int}()
-      r_I, r_J = nothing, nothing
-      same_I, same_J = true, true
-      for (j, x) in enumerate(eachrow(data))
-        if R(x)
-          λ += 1
-          push!(I, j)
-          if isnothing(r_I) r_I = x
-          elseif same_I same_I = (r_I == x) end
-        else
-          push!(J, j)
-          if isnothing(r_J) r_J = x
-          elseif same_J same_J = (r_J == x) end
-        end
-      end
-      λ = (λ+pseudocount)/(m+pseudocount)
-      factorize_pos_sub = (n_height > max_height) || (length(I) < min_examples) || same_I
-      factorize_neg_sub = (n_height > max_height) || (length(J) < min_examples) || same_J
-      pos_data = view(data, I, :)
-      neg_data = view(data, J, :)
-      Ch[i] = Sum([0, 0], [λ, 1.0-λ])
-      if dense_leaves
-        if factorize_pos_sub
-          pos = sample_dense(pos_data, collect(1:n), 1, 3, 2, 2, 2; binary = binarize,
-                             pseudocount = pseudocount)
-        else
-          pos = Sum(n_projs)
-        end
-        P.children[1] = pos
-        if factorize_neg_sub
-          neg = sample_dense(neg_data, collect(1:n), 1, 3, 2, 2, 2; binary = binarize,
-                             pseudocount = pseudocount)
-        else
-          neg = Sum(n_projs)
-        end
-        P.children[2] = neg
-      else
-        pos = factorize_pos_sub ? Product(n) : Sum(n_projs)
-        neg = factorize_neg_sub ? Product(n) : Sum(n_projs)
-        P.children[1], P.children[2] = pos, neg
-      end
-      if !dense_leaves && factorize_pos_sub
-        if binarize
-          θ = vec(sum(pos_data; dims = 1)) / length(I)
-        else
-          μ = mean(pos_data; dims = 1)
-          σ = std(pos_data; dims = 1)
-        end
-        for j in 1:n
-          if binarize pos.children[j] = Sum([⊥[j], ⊤[j]], [1-θ[j], θ[j]])
-          else pos.children[j] = Gaussian(j, μ[j], isnan(σ[j]) || σ[j] == 0 ? 0.05 : σ[j]*σ[j]) end
-        end
-      elseif !factorize_pos_sub
-        pos_dists = isnothing(dists) ? nothing : view(dists, I, I)
-        push!(Q, (pos_data, pos_dists, pos, n_height))
-      end
-      if !dense_leaves && factorize_neg_sub
-        if binarize
-          θ = vec(sum(neg_data; dims = 1)) / length(J)
-        else
-          μ = mean(neg_data; dims = 1)
-          σ = std(neg_data; dims = 1)
-        end
-        for j in 1:n
-          neg.children[j] = n_count
-          if binarize neg.children[j] = Sum([⊥[j], ⊤[j]], [1-θ[j], θ[j]])
-          else neg.children[j] = Gaussian(j, μ[j], isnan(σ[j]) || σ[j] == 0 ? 0.05 : σ[j]*σ[j]) end
-        end
-      elseif !factorize_neg_sub
-        neg_dists = isnothing(dists) ? nothing : view(dists, J, J)
-        push!(Q, (neg_data, neg_dists, neg, n_height))
-      end
-    end
+function learn_projections_single!(D::AbstractMatrix{<:Real}, f::Function, height::Integer,
+    max_height::Integer, min_examples::Integer)::Node
+  n, m = size(D)
+  if (height > max_height) || (n < min_examples)
+    @label ff
+    μ = mean(D; dims = 1)
+    σ = std(D; dims = 1, mean = μ)
+    return Product([Gaussian(i, μ[i], !(σ[i] > 0.03) ? 1e-3 : σ[i]^2) for i ∈ 1:m])
   end
-  return root
+  a, _, g = f(D)
+  if isnothing(a) @goto ff end
+  A, B = select(g, D)
+  k = size(A, 1)/n; w = [k, 1-k]
+  return Sum([learn_projections_single!(A, f, height + 1, max_height, min_examples),
+              learn_projections_single!(B, f, height + 1, max_height, min_examples)], w)
 end

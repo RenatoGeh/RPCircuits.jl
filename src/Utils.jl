@@ -192,3 +192,32 @@ function rescale_gauss!(r::Node, extrem::Vector{Tuple{Float64, Float64}}; scale:
   return r
 end
 export rescale_gauss!
+
+"""
+Returns a `Vector{UnitRange}` of ranges tentatively equally sized. The size of this collection is
+equal to `k`, which by default is the number of available threads `Thread.nthreads()`.
+
+  Example:
+
+  `n=23` and `k=10`
+
+  ```julia
+  julia> prepare_indices(23, 10)
+
+  10-element Vector{UnitRange{Int64}}:
+   1:3
+   3:5
+   5:7
+   7:9
+   9:12
+   12:14
+   14:16
+   16:18
+   18:20
+   20:23
+  ```
+"""
+function prepare_indices(n::Int, k::Int = Threads.nthreads())::Vector{UnitRange{Int64}}
+  s = floor.(Int, collect(range(1, n, k+1)))
+  return [s[i]:s[i+1] for i ∈ 1:length(s)-1]
+end

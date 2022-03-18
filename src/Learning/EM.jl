@@ -66,10 +66,9 @@ function update(
   Δ = Matrix{Float64}(undef, numrows, length(curr))
 
   # Compute backward pass (values)
-  LL = mlogpdf!(V, curr, Data)
+  LL = mplogpdf!(V, curr, Data)
   # Compute forward pass (derivatives)
-  backpropagate_tree!(Δ, curr, V)
-  if !isnothing(findfirst(isnan, LL)) || !isnothing(findfirst(isnan, Δ)) return -2, V, Δ end
+  pbackpropagate_tree!(Δ, curr, V)
 
   # Update sum weights
   Threads.@threads for i ∈ 1:length(sumnodes)
@@ -99,7 +98,6 @@ function update(
       # G.variance = learningrate*sum(α .* ((X .- G.mean) .^ 2)) + (1-learningrate)*H.variance
       # !(G.variance > minimumvariance) && (G.variance = minimumvariance)
     end
-    if !isnothing(findfirst(isnan, mean_u)) || !isnothing(findfirst(isnan, var_u)) return -1, V, Δ end
     for i ∈ 1:length(gaussiannodes)
       G = curr[gaussiannodes[i]]
       G.mean, G.variance = mean_u[i], var_u[i]
@@ -109,16 +107,20 @@ function update(
 
   if verbose && (learner.steps % 2 == 0)
     print("Training LL: ", sum(LL)/numrows, " | ")
-    ll = pNLL(LL, curr, learner.circ.L, validation)
+    n = size(validation, 1)
+    if n <= numrows
+      ll = mLL!(view(V, 1:n, :), curr, validation)
+    else
+      ll = mLL!(Matrix{Float64}(undef, n, length(curr)), curr, validation)
+    end
     if !isnothing(history) push!(history, ll) end
     println("Iteration $(learner.steps). η: $(learningrate), NLL: $(ll)")
   end
 
-  score = sum(LL)
   swap!(learner.circ)
   learner.steps += 1
   learner.prevscore = learner.score
-  learner.score = -score / numrows
+  learner.score = -sum(LL) / numrows
 
   return learner.prevscore - learner.score, V, Δ
 end
