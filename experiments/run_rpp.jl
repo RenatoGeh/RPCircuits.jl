@@ -312,8 +312,6 @@ function run_rand_bin()
     learner = SEM(C)
     indices = shuffle!(collect(1:size(R,1)))
     tee(out_data, "Mini-batch EM...")
-    avgnll = 0.0
-    runnll = 0.0
     H = Vector{Float64}()
     batch_time = @elapsed while learner.steps < em_steps
       sid = rand(1:(length(indices)-batchsize))
