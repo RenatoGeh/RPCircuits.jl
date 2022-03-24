@@ -44,9 +44,11 @@ function run_bin()
     tee(out_data, "Dataset: " * datasets[data_idx])
     R, V, T = twenty_datasets(datasets[data_idx]; as_df = false)
     println("Learning structure...")
+    Random.seed!(1)
     v_time = @elapsed vtree = learn_vtree(DataFrame(R, :auto); alg = :bottomup)
     println("  Learning circuit...")
-    c_time = @elapsed C, _ = learn_rpp(R, vtree; split, max_height, bin = true, min_examples = 20, pseudocount = 0)
+    println("Projection type: ", split)
+    c_time = @elapsed C = learn_rpp(R, vtree; split, max_height, bin = true, min_examples = 20, pseudocount = 1)
     tee(out_data, """
         Name: $(name)
         Split type: $(split)
@@ -68,14 +70,16 @@ function run_bin()
       sid = rand(1:(length(indices)-batchsize))
       batch = view(R, indices[sid:(sid+batchsize-1)], :)
       η = 0.975^learner.steps
-      update(learner, batch, η, 1e-4; verbose, validation = T, history = H)
+      update(learner, batch, η, smoothing; verbose, validation = T, history = H)
       # update(learner, batch, η, 1e-4; verbose = false, validation = V)
     end
     tee(out_data, "Batch EM LL: " * string(-NLL(C, T)))
     tee(out_data, "Full EM...")
     η = 1.0
+    Random.seed!(1)
     em_time = @elapsed while learner.steps < full_em_steps
-      update(learner, R, η; verbose = false, validation = V)
+      if datasets[data_idx] == "c20ng" oupdate(learner, R, 5000, η, smoothing; verbose, validation = T)
+      else update(learner, R, η, smoothing; verbose, validation = T) end
     end
     LL[data_idx] = -NLL(C, T)
     push!(H, -LL[data_idx])
@@ -84,43 +88,43 @@ function run_bin()
     tee(out_data, "Size: " * string(S[data_idx]))
     tee(out_data, @sprintf("Vtree time: %.8f\nCircuit time: %.8f\nBatch EM time: %.8f\nFull EM time: %.8f",
                            v_time, c_time, batch_time, em_time))
-    randomize!(C)
-    println("Randomizing...")
+    # randomize!(C)
+    # println("Randomizing...")
 
-    learner = SEM(C)
-    indices = shuffle!(collect(1:size(R,1)))
-    avgnll = 0.0
-    runnll = 0.0
-    H = Vector{Float64}()
-    batch_time = @elapsed while learner.steps < em_steps
-      sid = rand(1:(length(indices)-batchsize))
-      batch = view(R, indices[sid:(sid+batchsize-1)], :)
-      η = 0.975^learner.steps
-      update(learner, batch, η, 1e-4; verbose, validation = T, history = H)
-    end
-    η = 1.0
-    em_time = @elapsed while learner.steps < full_em_steps
-      update(learner, R, η; verbose = false, validation = V)
-    end
-    push!(H, NLL(C, T))
-    history_rand[data_idx] = H
+    # learner = SEM(C)
+    # indices = shuffle!(collect(1:size(R,1)))
+    # avgnll = 0.0
+    # runnll = 0.0
+    # H = Vector{Float64}()
+    # batch_time = @elapsed while learner.steps < em_steps
+      # sid = rand(1:(length(indices)-batchsize))
+      # batch = view(R, indices[sid:(sid+batchsize-1)], :)
+      # η = 0.975^learner.steps
+      # update(learner, batch, η, 1e-4; verbose, validation = T, history = H)
+    # end
+    # η = 1.0
+    # em_time = @elapsed while learner.steps < full_em_steps
+      # update(learner, R, η; verbose = false, validation = V)
+    # end
+    # push!(H, NLL(C, T))
+    # history_rand[data_idx] = H
     close(out_data)
   end
   println(LL)
   serialize("results/rpp_$(name).data", LL)
   serialize("results/rpp_$(name)_size.data", S)
   serialize("results/rpp_$(name)_hist.data", history)
-  serialize("results/rpp_$(name)_rand_hist.data", history_rand)
+  # serialize("results/rpp_$(name)_rand_hist.data", history_rand)
 end
 
 cont_data = ["abalone", "banknote", "ca", "kinematics", "quake", "sensorless", "chemdiab", "flowsize",
              "oldfaithful", "iris"]
 
-smoothing, minimumvariance = 0.1, 1e-3
+smoothing, minimumvariance = 1e-1, 1e-3
 
 function run_cont()
-  datasets = cont_data
-  # datasets = ["flowsize"]
+  # datasets = cont_data
+  datasets = ["flowsize"]
   LL = Vector{Float64}(undef, length(datasets))
   S = Vector{Tuple{Int, Int, Int}}(undef, length(datasets))
   for data_idx ∈ 1:length(datasets)
@@ -140,10 +144,11 @@ function run_cont()
       println("Learning structure...")
       l = -Inf
       C, v_time, c_time = nothing, nothing, nothing
+      Random.seed!(2)
       v_time = @elapsed vtree = learn_vtree_cont(R; alg = :bottomup)
       println("  Learning circuit...")
       # c_time = @elapsed C = learn_rpp_auto(R, vtree; samples = 20, split, max_height, bin = false, min_examples = 20, gmm = true)
-      c_time = @elapsed C, _ = learn_rpp(R, vtree; split, max_height, bin = false, min_examples = 20)
+      c_time = @elapsed C = learn_rpp(R, vtree; max_projs = 1, split, max_height, bin = false, min_examples = 100, gmm = true)
       # C_r = randomize(C)
       # println("  Number of projections: ", length(P))
       tee(out_data, """
@@ -268,7 +273,6 @@ function run_gmm_circ()
     lls = zeros(10)
     for (i, (T, R)) ∈ enumerate(P)
       println("Partition ", i)
-      Random.seed!(4)
       M = learn_multi_gmm(R; k = 5, kmeans_iter = 100, em_iter = 100, validation = T, minvar = 1e-3)
       lls[i] = -NLL(M, T)
       tee(out_data, "LL: " * string(lls[i]))
@@ -297,7 +301,7 @@ function run_rand_bin()
     println("Learning structure...")
     v_time = @elapsed vtree = learn_vtree(DataFrame(R, :auto); alg = :bottomup)
     println("  Learning circuit...")
-    c_time = @elapsed C, _ = learn_rpp(R, vtree; split, max_height, bin = true, min_examples = 20, pseudocount = 0)
+    c_time = @elapsed C = learn_rpp(R, vtree; split, max_height, bin = true, min_examples = 20, pseudocount = 0)
     tee(out_data, """
         Name: $(name)
         Split type: $(split)
@@ -341,7 +345,7 @@ function run_rand_bin()
 end
 
 global_logger(SimpleLogger(stdout, Logging.Error))
-# run_bin()
-run_cont()
+run_bin()
+# run_cont()
 # LL = run_gmm()
 # LL = run_gmm_circ()
