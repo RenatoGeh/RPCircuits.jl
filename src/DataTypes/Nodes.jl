@@ -135,6 +135,7 @@ export isprod
 
 Evaluates leaf `node` at the given `value` in log domain.
 """
+@inline logpdf(n::Indicator, value::Bool) = value == Bool(n.value) ? 0.0 : -Inf
 @inline logpdf(n::Indicator, value::Integer) =
   isnan(value) ? 0.0 : value == Int(n.value) ? 0.0 : -Inf
 @inline logpdf(n::Indicator, value::Float64) =

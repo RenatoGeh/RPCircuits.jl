@@ -64,6 +64,7 @@ function backpropagate!(diff::Vector{Float64}, circ::Vector{Node}, values::Vecto
 end
 
 function pbackpropagate_tree!(Δ::AbstractMatrix{<:Real}, C::Vector{Node}, V::AbstractMatrix{<:Real})
+  lim = -floatmax(eltype(Δ))
   Δ[:,end] .= 0.0
   n, m = size(Δ)
   contains_indicators = false
@@ -81,7 +82,7 @@ function pbackpropagate_tree!(Δ::AbstractMatrix{<:Real}, C::Vector{Node}, V::Ab
             # Indicator nodes are computed differently, since they may repeat (and so the structure is not
             # tree-shaped). Compute in normal space so as to minimize numerical errors.
             contains_indicators = true
-            Δ[R,c] .+= N.weights[j] * exp(d)
+            Δ[R,c] .+= N.weights[j] * exp.(d)
           else
             Δ[R,c] .= log(N.weights[j]) .+ d
           end
@@ -90,7 +91,7 @@ function pbackpropagate_tree!(Δ::AbstractMatrix{<:Real}, C::Vector{Node}, V::Ab
         v = view(V, R, i)
         for c ∈ N.children
           δ = d .+ v .- view(V, R, c)
-          δ[isinf.(δ)] .= -floatmax(Float64)
+          δ[isinf.(δ)] .= lim
           if C[c] isa Indicator
             contains_indicators = true
             Δ[R,c] .*= exp.(δ)
@@ -101,15 +102,16 @@ function pbackpropagate_tree!(Δ::AbstractMatrix{<:Real}, C::Vector{Node}, V::Ab
       end
     end
   end
-  if contains_indicators
-    for i ∈ 1:m
-      (C[i] isa Indicator) && (Δ[:,i] .= log.(view(Δ, :, i)))
-    end
-  end
+  # if contains_indicators
+    # for i ∈ 1:m
+      # (C[i] isa Indicator) && (Δ[:,i] .= log.(view(Δ, :, i)))
+    # end
+  # end
   return nothing
 end
 
 function backpropagate_tree!(Δ::AbstractMatrix{<:Real}, C::Vector{Node}, V::AbstractMatrix{<:Real})
+  lim = -floatmax(eltype(Δ))
   Δ[:,end] .= 0.0
   n, m = size(Δ)
   contains_indicators = false
@@ -124,7 +126,7 @@ function backpropagate_tree!(Δ::AbstractMatrix{<:Real}, C::Vector{Node}, V::Abs
           # Indicator nodes are computed differently, since they may repeat (and so the structure is not
           # tree-shaped). Compute in normal space so as to minimize numerical errors.
           constains_indicators = true
-          Δ[:,c] .+= N.weights[j] * exp(d)
+          Δ[:,c] .+= N.weights[j] * exp.(d)
         else
           Δ[:,c] .= log(N.weights[j]) .+ d
         end
@@ -133,7 +135,7 @@ function backpropagate_tree!(Δ::AbstractMatrix{<:Real}, C::Vector{Node}, V::Abs
       v = view(V, :, i)
       for c ∈ N.children
         δ = d .+ v .- view(V, :, c)
-        δ[isinf.(δ)] .= -floatmax(Float64)
+        δ[isinf.(δ)] .= lim
         if C[c] isa Indicator
           contains_indicators = true
           Δ[:,c] .*= exp.(δ)

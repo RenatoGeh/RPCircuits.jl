@@ -206,18 +206,23 @@ equal to `k`, which by default is the number of available threads `Thread.nthrea
 
   10-element Vector{UnitRange{Int64}}:
    1:3
-   3:5
-   5:7
-   7:9
-   9:12
-   12:14
-   14:16
-   16:18
-   18:20
-   20:23
+   4:5
+   6:7
+   8:9
+   10:12
+   13:14
+   15:16
+   17:18
+   19:20
+   21:23
   ```
 """
 function prepare_indices(n::Int, k::Int = Threads.nthreads())::Vector{UnitRange{Int64}}
   s = floor.(Int, collect(range(1, n, k+1)))
-  return [s[i]:s[i+1] for i ∈ 1:length(s)-1]
+  return [i == 1 ? (s[i]:s[i+1]) : (s[i]+1:s[i+1]) for i ∈ 1:length(s)-1]
+end
+function prepare_step_indices(n::Int, s::Int)::Vector{UnitRange{Int64}}
+  r = 1:s:n
+  I = [i == 1 ? (r[i]:r[i+1]) : (r[i]+1:r[i+1]) for i ∈ 1:length(r)-1]
+  return r.stop != n ? push!(I, r.stop+1:n) : I
 end

@@ -230,7 +230,7 @@ function sid_rule(S::AbstractMatrix{<:Real}, c::Float64, trials::Int)::Union{Fun
   μ = median(Z)
   return x::AbstractVector{<:Real} -> norm(x - me) <= μ
 end
-function sid_rulep(S::AbstractMatrix{<:Real}, c::Float64, trials::Int = 10)::Union{Tuple{Vector{Float64}, Float64, Function}, Nothing}
+function sid_rulep(S::AbstractMatrix{<:Real}, c::Float64, trials::Int = 10)::Union{Tuple{Vector{Float64}, Float64, Function}, Tuple{Nothing, Nothing, Nothing}}
   n, m = size(S)
   x, y = rand(1:n), rand(1:n-1)
   if x == y y = n end

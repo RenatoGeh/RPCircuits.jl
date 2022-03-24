@@ -70,6 +70,8 @@ function update(
   # Compute forward pass (derivatives)
   pbackpropagate_tree!(Δ, curr, V)
 
+  # if any(isnan, V) || any(isnan, Δ) return -1, V, Δ end
+
   # Update sum weights
   Threads.@threads for i ∈ 1:length(sumnodes)
     s = sumnodes[i]
@@ -78,10 +80,10 @@ function update(
     for (j, c) ∈ enumerate(S.children)
       β[j] = log(S.weights[j]) + logsumexp(view(Δ, :, s) .+ view(V, :, c) .- LL)
     end
-    u = exp.(β .- logsumexp(β))# .+ smoothing
-    # u ./= sum(u)
-    # u .= learningrate .* u .+ (1.0-learningrate) .* Z.weights
-    S.weights .= u# ./ sum(u)
+    u = exp.(β .- logsumexp(β)) .+ smoothing
+    u ./= sum(u)
+    u .= learningrate .* u .+ (1.0-learningrate) .* Z.weights
+    S.weights .= u ./ sum(u)
   end
 
   # Update Gaussian parameters
@@ -93,15 +95,13 @@ function update(
       α = view(Δ, :, g) .+ view(V, :, g) .- LL
       α .= exp.(α .- logsumexp(α))
       X = view(Data, :, G.scope)
-      mean_u[i], var_u[i] = learningrate*sum(α .* X) + (1-learningrate)*H.mean, learningrate*sum(α .* ((X .- G.mean) .^ 2)) + (1-learningrate)*H.variance
-      # G.mean = learningrate*sum(α .* X) + (1-learningrate)*H.mean
-      # G.variance = learningrate*sum(α .* ((X .- G.mean) .^ 2)) + (1-learningrate)*H.variance
-      # !(G.variance > minimumvariance) && (G.variance = minimumvariance)
+      mean_u[i] = learningrate*sum(α .* X) + (1-learningrate)*H.mean
+      var_u[i] = learningrate*sum(α .* ((X .- mean_u[i]) .^ 2)) + (1-learningrate)*H.variance
     end
+    # if any(isnan, mean_u) || any(isnan, var_u) return -2, V, Δ end
     for i ∈ 1:length(gaussiannodes)
       G = curr[gaussiannodes[i]]
-      G.mean, G.variance = mean_u[i], var_u[i]
-      !(G.variance > minimumvariance) && (G.variance = minimumvariance)
+      G.mean, G.variance = mean_u[i], var_u[i] < minimumvariance ? minimumvariance : var_u[i]
     end
   end
 
@@ -114,7 +114,7 @@ function update(
       ll = mLL!(Matrix{Float64}(undef, n, length(curr)), curr, validation)
     end
     if !isnothing(history) push!(history, ll) end
-    println("Iteration $(learner.steps). η: $(learningrate), NLL: $(ll)")
+    println("Iteration $(learner.steps). η: $(learningrate), LL: $(ll)")
   end
 
   swap!(learner.circ)
@@ -125,6 +125,87 @@ function update(
   return learner.prevscore - learner.score, V, Δ
 end
 export update
+
+"Full EM, but computed online so that memory does not explode."
+function oupdate(
+  learner::SEM,
+  Data::AbstractMatrix,
+  batchsize::Integer,
+  learningrate::Float64 = 1.0,
+  smoothing::Float64 = 1e-4,
+  learngaussians::Bool = false,
+  minimumvariance::Float64 = learner.minimumvariance;
+  verbose::Bool = false, validation::AbstractMatrix = Data, history = nothing
+)
+
+  numrows, numcols = size(Data)
+
+  curr = learner.circ.C
+  prev = learner.circ.P
+  score = 0.0
+  sumnodes = learner.circ.S
+  if learngaussians
+    gaussiannodes = learner.circ.gauss.G
+  end
+
+  batches = prepare_step_indices(numrows, batchsize)
+  B = [zeros(length(curr[s].children)) for s ∈ sumnodes]
+  #learngaussians && (A = zeros(length(gaussiannodes)))
+  V = Matrix{Float64}(undef, batchsize, length(curr))
+  Δ = Matrix{Float64}(undef, batchsize, length(curr))
+  n = size(V, 1)
+  ll = 0.0
+  for (b, I) ∈ enumerate(batches)
+    k = length(I)
+    if k < n
+      V_b, Δ_b = view(V, 1:k, :), view(Δ, 1:k, :)
+    else
+      V_b, Δ_b = V, Δ
+    end
+    LL = mplogpdf!(V_b, curr, view(Data, I, :))
+    pbackpropagate_tree!(Δ_b, curr, V_b)
+
+    Threads.@threads for i ∈ 1:length(sumnodes)
+      s = sumnodes[i]
+      S = curr[s]
+      for (j, c) ∈ enumerate(S.children)
+        B[i][j] += sum(exp.(view(Δ_b, :, s) .+ view(V_b, :, c) .- LL))
+      end
+    end
+
+    ll += sum(LL)
+  end
+
+  Threads.@threads for i ∈ 1:length(sumnodes)
+    s = sumnodes[i]
+    S, Z = curr[s], prev[s]
+    B[i] .*= S.weights
+    β = B[i]
+    u = (β ./ sum(β)) .+ smoothing
+    u .= learningrate .* (u / sum(u)) .+ (1.0-learningrate) .* Z.weights
+    S.weights .= u / sum(u)
+  end
+
+  if verbose && (learner.steps % 2 == 0)
+    print("Training LL: ", ll/numrows, " | ")
+    n = size(validation, 1)
+    if n <= numrows
+      ll = mLL!(view(V, 1:n, :), curr, validation)
+    else
+      ll = mLL!(Matrix{Float64}(undef, n, length(curr)), curr, validation)
+    end
+    if !isnothing(history) push!(history, ll) end
+    println("Iteration $(learner.steps). η: $(learningrate), LL: $(ll)")
+  end
+
+  swap!(learner.circ)
+  learner.steps += 1
+  learner.prevscore = learner.score
+  learner.score = -ll / numrows
+
+  return learner.prevscore - learner.score, V, Δ
+end
+export oupdate
 
 # Parameter learning by Accelerated Expectation-Maximimzation (SQUAREM)
 # RAVI VARADHAN & CHRISTOPHE ROLAND, Simple and Globally Convergent Methods for Accelerating the Convergence of Any EM Algorithm, J. Scand J Statist 2008

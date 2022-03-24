@@ -78,12 +78,12 @@ const continuous_datasets_names = ["abalone", "banknote", "ca", "kinematics", "q
 Load a given dataset from the continuous density estimation datasets. Automatically downloads the files as julia Artifacts.
 See https://github.com/RenatoGeh/CDEBD for a list of avaialble datasets.
 """
-function continuous_datasets(name::String; as_df::Bool = true, normalize::Bool = false)::Union{DataFrame, Matrix{Float64}}
+function continuous_datasets(name::String; as_df::Bool = true, normalize::Bool = false, compact::Bool = false)::Union{DataFrame, Matrix{Float64}, Matrix{Float32}}
   @assert in(name, continuous_datasets_names)
   url = name ∈ ["iris", "oldfaithful", "chemdiab"] ? "https://raw.githubusercontent.com/RenatoGeh/CDEBD/main/datasets/$(name).data" : "https://raw.githubusercontent.com/RenatoGeh/CDEBD/main/kfold/$(name)/$(name).data"
   D = CSV.File(Downloads.download(url)) |> DataFrame
   if normalize
-    M = Matrix{Float64}(D)
+    M = Matrix{compact ? Float32 : Float64}(D)
     E = vec(extrema(M; dims = 1))
     Threads.@threads for x ∈ 1:size(M, 2)
       a, b = E[x]
@@ -93,7 +93,7 @@ function continuous_datasets(name::String; as_df::Bool = true, normalize::Bool =
     end
     return as_df ? DataFrame(M, :auto) : M
   end
-  return as_df ? D : Matrix{Float64}(D)
+  return as_df ? D : Matrix{compact ? Float32 : Float64}(D)
 end
 export continuous_datasets
 

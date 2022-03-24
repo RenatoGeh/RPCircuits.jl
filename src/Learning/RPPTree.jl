@@ -8,36 +8,32 @@ BLAS.set_num_threads(Threads.nthreads())
 
 @inline isleaf(v::Vtree)::Bool = isa(v, PlainVtreeLeafNode)
 
-function learn_rpp_proj!(S::SubArray{<:Real, 2}, V::Vtree, f::Function, pa_id::Int, height::Int,
-    P::Vector{Projection}, bin::Bool, min_examples::Int, max_height::Int, rep_projs::Int,
-    max_projs::Int, I::Vector{Tuple{Indicator, Indicator}}, hyperplanes::Vector{Function})::Node
+function learn_rpp_proj!(S::SubArray{<:Real, 2}, V::Vtree, f::Function, height::Int,
+    bin::Bool, min_examples::Int, max_height::Int, rep_projs::Int, max_projs::Int,
+    I::Vector{Tuple{Indicator, Indicator}}, gmm::Bool, pseudocount::Int)::Node
   n, m = size(S)
   if (n < min_examples) || (height > max_height)
     @label ff
     ch = Vector{Node}(undef, m)
     U = S.indices[2]
     if bin
-      W = sum(S; dims = 1) / n
+      W = (sum(S; dims = 1) .+ pseudocount) ./ (n + pseudocount*2)
       for i ∈ 1:m
         u, w = U[i], W[i]
         ⊥, ⊤ = I[u]
         ch[i] = Sum([⊥, ⊤], [1.0-w, w])
       end
+    elseif gmm return learn_multi_gmm(S; em_iter = 0, V = U)
     else
       μ = mean(S; dims = 1)
       s = std(S; dims = 1, mean = μ)
-      map!(x -> !(x > 0.2) ? 0.04 : x*x, s, s)
+      map!(x -> !(x > 0.03) ? 1e-3 : x*x, s, s)
       for i ∈ 1:m ch[i] = Gaussian(U[i], μ[i], s[i]) end
     end
     return Product(ch)
   end
-  if length(hyperplanes) < height
-    a, θ, g = f(S)
-    if isnothing(a) @goto ff end
-    push!(hyperplanes, g)
-  else
-    g = hyperplanes[height]
-  end
+  a, _, g = f(S)
+  if isnothing(a) @goto ff end
   # Negatives (A) and positives (B).
   A, B = select(g, S)
   # Initially give weights as the data proportion.
@@ -47,96 +43,19 @@ function learn_rpp_proj!(S::SubArray{<:Real, 2}, V::Vtree, f::Function, pa_id::I
   # proj = Projection(pa_id, Ref(w), a, θ)
   # push!(P, proj)
   # IDs are the indexes of the parent projections.
-  id = length(P)
   if rep_projs > 0
-    return Sum([learn_rpp_proj!(A, V, f, id, height+1, P, bin, min_examples, max_height,
-                                rep_projs-1, max_projs, I, hyperplanes),
-                learn_rpp_proj!(B, V, f, id, height+1, P, bin, min_examples, max_height,
-                                rep_projs-1, max_projs, I, hyperplanes)], w)
+    return Sum([learn_rpp_proj!(A, V, f, height+1, bin, min_examples, max_height, rep_projs-1,
+                                max_projs, I, gmm, pseudocount),
+                learn_rpp_proj!(B, V, f, height+1, bin, min_examples, max_height, rep_projs-1,
+                                max_projs, I, gmm, pseudocount)], w)
   end
-  return Sum([learn_rpp_part!(A, V, f, id, height+1, P, bin, min_examples, max_height, max_projs,
-                              I, hyperplanes),
-              learn_rpp_part!(B, V, f, id, height+1, P, bin, min_examples, max_height, max_projs,
-                              I, hyperplanes)], w)
+  return Sum([learn_rpp_part!(A, V, f, height+1, bin, min_examples, max_height, max_projs, I, gmm, pseudocount),
+              learn_rpp_part!(B, V, f, height+1, bin, min_examples, max_height, max_projs, I, gmm, pseudocount)], w)
 end
 
-function learn_rpp_part!(S::SubArray{<:Real, 2}, V::Vtree, f::Function, pa_id::Int, height::Int,
-    P::Vector{Projection}, bin::Bool, min_examples::Int, max_height::Int, max_projs::Int,
-    I::Vector{Tuple{Indicator, Indicator}}, hyperplanes::Vector{Function})::Node
-  n, m = size(S)
-  # Single variable. Return univariate distribution.
-  if isleaf(V)
-    u = variable(V)
-    Z = reshape(S, :)#view(S, :, u)
-    if bin
-      w = sum(Z)/n
-      ⊥, ⊤ = I[u]
-      return Sum([⊥, ⊤], [1.0-w, w])
-    end
-    μ = mean(Z)
-    s = std(Z; mean = μ)
-    # This deals with NaNs, Infs and 0.
-    if !(s < 0.2) s = 0.04 else s *= s end
-    return Gaussian(u, μ, s)
-  # Small dataset or max height. Return fully factorized circuit.
-  elseif (n < min_examples) || (height > max_height)
-    @label ff
-    ch = Vector{Node}(undef, m)
-    U = S.indices[2]
-    if bin
-      W = sum(S; dims = 1) / n
-      for i ∈ 1:m
-        u, w = U[i], W[i]
-        ⊥, ⊤ = I[u]
-        ch[i] = Sum([⊥, ⊤], [1.0-w, w])
-      end
-    else
-      μ = mean(S; dims = 1)
-      s = std(S; dims = 1, mean = μ)
-      map!(x -> !(x > 0.2) ? 0.04 : x*x, s, s)
-      for i ∈ 1:m ch[i] = Gaussian(U[i], μ[i], s[i]) end
-    end
-    return Product(ch)
-  end
-  # Create projection and subsequent sum node.
-  if length(hyperplanes) < height
-    a, θ, g = f(S)
-    if isnothing(a) @goto ff end
-    push!(hyperplanes, g)
-  else
-    g = hyperplanes[height]
-  end
-  # Negatives (A) and positives (B).
-  A, B = select(g, S)
-  # Initially give weights as the data proportion.
-  k = size(A, 1)/n; w = [k, 1-k]
-  # Be sure to pass w as a pointer (actually a reference) to the sum's weights so we can
-  # efficiently compute during parameter learning.
-  # proj = Projection(pa_id, Ref(w), a, θ)
-  # push!(P, proj)
-  # IDs are the indexes of the parent projections.
-  id = length(P)
-  # Scopes for subs and primes.
-  Sc_sub, Sc_prime = variables(V.left), variables(V.right)
-  U = S.indices[2]
-  X, Y = findall(∈(Sc_sub), U), findall(∈(Sc_prime), U)
-  # Negatives, each on the subs and primes.
-  neg = Product([learn_rpp_proj!(view(A, :, X), V.left, f, id, height + 1, P, bin, min_examples,
-                                 max_height, max_projs, max_projs, I, hyperplanes),
-                 learn_rpp_proj!(view(A, :, Y), V.right, f, id, height + 1, P, bin, min_examples,
-                                 max_height, max_projs, max_projs, I, hyperplanes)])
-  # Positives, each on the subs and primes.
-  pos = Product([learn_rpp_proj!(view(B, :, X), V.left, f, id, height + 1, P, bin, min_examples,
-                                 max_height, max_projs, max_projs, I, hyperplanes),
-                 learn_rpp_proj!(view(B, :, Y), V.right, f, id, height + 1, P, bin, min_examples,
-                                 max_height, max_projs, max_projs, I, hyperplanes)])
-  # Finally, return the resulting sum node, with same weights as the ones given to the projection.
-  return Sum([neg, pos], w)
-end
-
-function learn_rpp!(S::SubArray{<:Real, 2}, V::Vtree, f::Function, pa_id::Int, height::Int,
-    P::Vector{Projection}, bin::Bool, min_examples::Int, max_height::Int,
-    I::Vector{Tuple{Indicator, Indicator}}, gmm::Bool, pseudocount::Int)::Node
+function learn_rpp_part!(S::SubArray{<:Real, 2}, V::Vtree, f::Function, height::Int, bin::Bool,
+    min_examples::Int, max_height::Int, max_projs::Int, I::Vector{Tuple{Indicator, Indicator}},
+    gmm::Bool, pseudocount::Real)::Node
   n, m = size(S)
   # Single variable. Return univariate distribution.
   if isleaf(V)
@@ -150,7 +69,7 @@ function learn_rpp!(S::SubArray{<:Real, 2}, V::Vtree, f::Function, pa_id::Int, h
     μ = mean(Z)
     s = std(Z; mean = μ)
     # This deals with NaNs, Infs and 0.
-    if !(s > 0.2) s = 0.04 else s *= s end
+    if !(s < 0.03) s = 1e-3 else s *= s end
     return Gaussian(u, μ, s)
   # Small dataset or max height. Return fully factorized circuit.
   elseif (n < min_examples) || (height > max_height)
@@ -158,7 +77,7 @@ function learn_rpp!(S::SubArray{<:Real, 2}, V::Vtree, f::Function, pa_id::Int, h
     ch = Vector{Node}(undef, m)
     U = S.indices[2]
     if bin
-      W = (sum(S; dims = 1) .+ pseudocount)/(n+pseudocount*2)
+      W = (sum(S; dims = 1) .+ pseudocount) ./ (n + pseudocount*2)
       for i ∈ 1:m
         u, w = U[i], W[i]
         ⊥, ⊤ = I[u]
@@ -169,34 +88,92 @@ function learn_rpp!(S::SubArray{<:Real, 2}, V::Vtree, f::Function, pa_id::Int, h
     else
       μ = mean(S; dims = 1)
       s = std(S; dims = 1, mean = μ)
-      map!(x -> !(x > 0.2) ? 0.04 : x*x, s, s)
+      map!(x -> !(x > 0.03) ? 1e-3 : x*x, s, s)
       for i ∈ 1:m ch[i] = Gaussian(U[i], μ[i], s[i]) end
     end
     return Product(ch)
   end
   # Create projection and subsequent sum node.
-  a, θ, g = f(S)
+  a, _, g = f(S)
   if isnothing(a) @goto ff end
   # Negatives (A) and positives (B).
   A, B = select(g, S)
   # Initially give weights as the data proportion.
   k = size(A, 1)/n; w = [k, 1-k]
-  # Be sure to pass w as a pointer (actually a reference) to the sum's weights so we can
-  # efficiently compute during parameter learning.
-  # proj = Projection(pa_id, Ref(w), a, θ)
-  # push!(P, proj)
-  # IDs are the indeces of the parent projections.
-  id = length(P)
-  # Scopes for subs and primes.
   Sc_sub, Sc_prime = variables(V.left), variables(V.right)
   U = S.indices[2]
   X, Y = findall(∈(Sc_sub), U), findall(∈(Sc_prime), U)
   # Negatives, each on the subs and primes.
-  neg = Product([learn_rpp!(view(A, :, X), V.left, f, id, height + 1, P, bin, min_examples, max_height, I, gmm, pseudocount),
-                 learn_rpp!(view(A, :, Y), V.right, f, id, height + 1, P, bin, min_examples, max_height, I, gmm, pseudocount)])
+  neg = Product([learn_rpp_proj!(view(A, :, X), V.left, f, height + 1, bin, min_examples,
+                                 max_height, max_projs, max_projs, I, gmm, pseudocount),
+                 learn_rpp_proj!(view(A, :, Y), V.right, f, height + 1, bin, min_examples,
+                                 max_height, max_projs, max_projs, I, gmm, pseudocount)])
   # Positives, each on the subs and primes.
-  pos = Product([learn_rpp!(view(B, :, X), V.left, f, id, height + 1, P, bin, min_examples, max_height, I, gmm, pseudocount),
-                 learn_rpp!(view(B, :, Y), V.right, f, id, height + 1, P, bin, min_examples, max_height, I, gmm, pseudocount)])
+  pos = Product([learn_rpp_proj!(view(B, :, X), V.left, f, height + 1, bin, min_examples,
+                                 max_height, max_projs, max_projs, I, gmm, pseudocount),
+                 learn_rpp_proj!(view(B, :, Y), V.right, f, height + 1, bin, min_examples,
+                                 max_height, max_projs, max_projs, I, gmm, pseudocount)])
+  # Finally, return the resulting sum node, with same weights as the ones given to the projection.
+  return Sum([neg, pos], w)
+end
+
+function learn_rpp!(S::SubArray{<:Real, 2}, V::Vtree, f::Function, height::Int, bin::Bool,
+    min_examples::Int, max_height::Int, I::Vector{Tuple{Indicator, Indicator}}, gmm::Bool,
+    pseudocount::Int)::Node
+  n, m = size(S)
+  # Single variable. Return univariate distribution.
+  if isleaf(V)
+    u = variable(V)
+    Z = reshape(S, :)#view(S, :, u)
+    if bin
+      w = (sum(Z)+pseudocount)/(n+pseudocount*2)
+      ⊥, ⊤ = I[u]
+      return Sum([⊥, ⊤], [1.0-w, w])
+    elseif gmm return learn_gmm(S[:,1], u) end
+    μ = mean(Z)
+    s = std(Z; mean = μ)
+    # This deals with NaNs, Infs and 0.
+    if !(s > 0.03) s = 1e-3 else s *= s end
+    return Gaussian(u, μ, s)
+  # Small dataset or max height. Return fully factorized circuit.
+  # TODO: fully factorized circuit that follows a vtree (contiguous 2-prods following vtree)
+  elseif (n < min_examples) || (height > max_height)
+    @label ff
+    ch = Vector{Node}(undef, m)
+    U = S.indices[2]
+    if bin
+      W = (sum(S; dims = 1) .+ pseudocount) ./ (n + pseudocount*2)
+      for i ∈ 1:m
+        u, w = U[i], W[i]
+        ⊥, ⊤ = I[u]
+        ch[i] = Sum([⊥, ⊤], [1.0-w, w])
+      end
+    elseif gmm
+      for i ∈ 1:m ch[i] = learn_gmm(S[:,i], U[i]) end
+    else
+      μ = mean(S; dims = 1)
+      s = std(S; dims = 1, mean = μ)
+      map!(x -> !(x > 0.03) ? 1e-3 : x*x, s, s)
+      for i ∈ 1:m ch[i] = Gaussian(U[i], μ[i], s[i]) end
+    end
+    return Product(ch)
+  end
+  # Create projection and subsequent sum node.
+  a, _, g = f(S)
+  if isnothing(a) @goto ff end
+  # Negatives (A) and positives (B).
+  A, B = select(g, S)
+  # Initially give weights as the data proportion.
+  k = size(A, 1)/n; w = [k, 1-k]
+  Sc_sub, Sc_prime = variables(V.left), variables(V.right)
+  U = S.indices[2]
+  X, Y = findall(∈(Sc_sub), U), findall(∈(Sc_prime), U)
+  # Negatives, each on the subs and primes.
+  neg = Product([learn_rpp!(view(A, :, X), V.left, f, height + 1, bin, min_examples, max_height, I, gmm, pseudocount),
+                 learn_rpp!(view(A, :, Y), V.right, f, height + 1, bin, min_examples, max_height, I, gmm, pseudocount)])
+  # Positives, each on the subs and primes.
+  pos = Product([learn_rpp!(view(B, :, X), V.left, f, height + 1, bin, min_examples, max_height, I, gmm, pseudocount),
+                 learn_rpp!(view(B, :, Y), V.right, f, height + 1, bin, min_examples, max_height, I, gmm, pseudocount)])
   # Finally, return the resulting sum node, with same weights as the ones given to the projection.
   return Sum([neg, pos], w)
 end
@@ -285,12 +262,10 @@ export learn_rpp_auto
 function learn_rpp(D::AbstractMatrix{<:Real}, V::Vtree; split::Symbol = :max, c::Real = 1.0, r::Real = 2.0,
     trials::Int = 10, bin::Bool = true, min_examples::Int = 30, max_height::Int = 10,
     I::Vector{Tuple{Indicator, Indicator}} = bin ? [(Indicator(u, 0), Indicator(u, 1)) for u ∈ 1:size(D, 2)] : Tuple{Indicator, Indicator}[],
-    max_projs::Int = 0, gmm::Bool = false, pseudocount::Int = 2)::Tuple{Node, Vector{Projection}}
+    max_projs::Int = 0, gmm::Bool = false, pseudocount::Int = 2)::Node
   f = split == :max ? (x -> max_rulep(x, r, trials)) : (x -> sid_rulep(x, c, trials))
-  P = Vector{Projection}()
-  r = max_projs > 0 ? learn_rpp_proj!(view(D, :, :), V, f, -1, 1, P, bin, min_examples, max_height, max_projs, max_projs, I, Vector{Function}()) :
-                      learn_rpp!(view(D, :, :), V, f, -1, 1, P, bin, min_examples, max_height, I, gmm, pseudocount)
-  return r, P
+  return max_projs > 0 ? learn_rpp_proj!(view(D, :, :), V, f, -1, bin, min_examples, max_height, max_projs, max_projs, I, gmm, pseudocount) :
+                         learn_rpp!(view(D, :, :), V, f, -1, bin, min_examples, max_height, I, gmm, pseudocount)
 end
 export learn_rpp
 
