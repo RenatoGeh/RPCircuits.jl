@@ -21,6 +21,7 @@ mutable struct CCircuit
   D::Vector{Float64} # derivatives
   L::Vector{Vector{UInt}} # layers
   S::Vector{UInt} # sums
+  I::Union{Nothing, Vector{UInt}} # indicators
   gauss::Union{Nothing, GStore} # gaussians
 end
 
@@ -63,13 +64,15 @@ function compile(::Type{CCircuit}, r::Node; gauss::Bool = false)::CCircuit
     L[i] = l
   end
   V, D = zeros(n), zeros(n)
-  gs = nothing
+  gs, I = nothing, nothing
   if gauss
     G = [i for (i, x) ∈ enumerate(C) if isa(x, Gaussian)]
     μ = Dict{UInt, Float64}(n => 0.0 for n ∈ G)
     squares = Dict{UInt, Float64}(n => 0.0 for n ∈ G)
     denon = Dict{UInt, Float64}(n => 0.0 for n ∈ G)
     gs = GStore(G, μ, squares, denon)
+  else
+    I = [i for (i, x) ∈ enumerate(C) if isa(x, Indicator)]
   end
-  return CCircuit(C, P, V, D, L, [i for (i, x) ∈ enumerate(C) if isa(x, CSum)], gs)
+  return CCircuit(C, P, V, D, L, [i for (i, x) ∈ enumerate(C) if isa(x, CSum)], I, gs)
 end

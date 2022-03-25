@@ -44,11 +44,10 @@ function run_bin()
     tee(out_data, "Dataset: " * datasets[data_idx])
     R, V, T = twenty_datasets(datasets[data_idx]; as_df = false)
     println("Learning structure...")
-    Random.seed!(1)
+    # Random.seed!(1)
     v_time = @elapsed vtree = learn_vtree(DataFrame(R, :auto); alg = :bottomup)
     println("  Learning circuit...")
-    println("Projection type: ", split)
-    c_time = @elapsed C = learn_rpp(R, vtree; split, max_height, bin = true, min_examples = 20, pseudocount = 1)
+    c_time = @elapsed C = learn_rpp(R, vtree; split, max_height, bin = true, min_examples = 20, pseudocount = 0, trials = 100)
     tee(out_data, """
         Name: $(name)
         Split type: $(split)
@@ -61,14 +60,15 @@ function run_bin()
     tee(out_data, "LL: " * string(-NLL(C, T)))
     println("Learning parameters...")
     learner = SEM(C)
-    indices = shuffle!(collect(1:size(R,1)))
+    ranges = prepare_step_indices(size(R, 1), batchsize)
     tee(out_data, "Mini-batch EM...")
-    avgnll = 0.0
-    runnll = 0.0
     H = Vector{Float64}()
+    # Random.seed!(1)
+    indices = collect(1:size(R, 1))
     batch_time = @elapsed while learner.steps < em_steps
-      sid = rand(1:(length(indices)-batchsize))
-      batch = view(R, indices[sid:(sid+batchsize-1)], :)
+      if learner.steps % 2 == 0 shuffle!(indices) end
+      I = view(indices, ranges[(learner.steps % length(ranges)) + 1])
+      batch = view(R, I, :)
       η = 0.975^learner.steps
       update(learner, batch, η, smoothing; verbose, validation = T, history = H)
       # update(learner, batch, η, 1e-4; verbose = false, validation = V)
@@ -76,9 +76,8 @@ function run_bin()
     tee(out_data, "Batch EM LL: " * string(-NLL(C, T)))
     tee(out_data, "Full EM...")
     η = 1.0
-    Random.seed!(1)
     em_time = @elapsed while learner.steps < full_em_steps
-      if datasets[data_idx] == "c20ng" oupdate(learner, R, 5000, η, smoothing; verbose, validation = T)
+      if datasets[data_idx] == "c20ng" oupdate(learner, R, 2000, η, smoothing; verbose, validation = T)
       else update(learner, R, η, smoothing; verbose, validation = T) end
     end
     LL[data_idx] = -NLL(C, T)
@@ -120,7 +119,7 @@ end
 cont_data = ["abalone", "banknote", "ca", "kinematics", "quake", "sensorless", "chemdiab", "flowsize",
              "oldfaithful", "iris"]
 
-smoothing, minimumvariance = 1e-1, 1e-3
+smoothing, minimumvariance = 1e-4, 1e-3
 
 function run_cont()
   # datasets = cont_data

@@ -221,8 +221,13 @@ function prepare_indices(n::Int, k::Int = Threads.nthreads())::Vector{UnitRange{
   s = floor.(Int, collect(range(1, n, k+1)))
   return [i == 1 ? (s[i]:s[i+1]) : (s[i]+1:s[i+1]) for i ∈ 1:length(s)-1]
 end
+export prepare_indices
 function prepare_step_indices(n::Int, s::Int)::Vector{UnitRange{Int64}}
   r = 1:s:n
   I = [i == 1 ? (r[i]:r[i+1]) : (r[i]+1:r[i+1]) for i ∈ 1:length(r)-1]
   return r.stop != n ? push!(I, r.stop+1:n) : I
 end
+export prepare_step_indices
+
+@inline isinvalid(x::Real)::Bool = isinf(x) || isnan(x)
+@inline setinvalid!(X::AbstractVector{<:Real}, y::Real = -floatmax(eltype(X)))::Nothing = (X[map(isinvalid, X)] .= y; nothing)

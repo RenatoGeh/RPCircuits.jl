@@ -49,7 +49,7 @@ function update(
   smoothing::Float64 = 1e-4,
   learngaussians::Bool = false,
   minimumvariance::Float64 = learner.minimumvariance;
-  verbose::Bool = false, validation::AbstractMatrix = Data, history = nothing
+  verbose::Bool = false, validation::AbstractMatrix = Data, history = nothing, binary::Bool = false
 )
 
   numrows, numcols = size(Data)
@@ -68,21 +68,26 @@ function update(
   # Compute backward pass (values)
   LL = mplogpdf!(V, curr, Data)
   # Compute forward pass (derivatives)
-  pbackpropagate_tree!(Δ, curr, V)
+  pbackpropagate_tree!(Δ, curr, V; indicators = learner.circ.I)
 
-  # if any(isnan, V) || any(isnan, Δ) return -1, V, Δ end
+  # if any(isnan, V) || any(isnan, Δ) println("break -1"); return -1, V, Δ end
 
   # Update sum weights
   Threads.@threads for i ∈ 1:length(sumnodes)
     s = sumnodes[i]
     S, Z = curr[s], prev[s]
     β = Vector{Float64}(undef, length(S.children))
+    infs = 0
     for (j, c) ∈ enumerate(S.children)
       β[j] = log(S.weights[j]) + logsumexp(view(Δ, :, s) .+ view(V, :, c) .- LL)
+      isinf(β[j]) && (infs += 1)
     end
+    if infs == length(S.children) continue end
     u = exp.(β .- logsumexp(β)) .+ smoothing
+    # if any(isnan, u ./ sum(u)) println("break -2.1 ", u, β); return -2, V, Δ, β, u end
     u ./= sum(u)
     u .= learningrate .* u .+ (1.0-learningrate) .* Z.weights
+    # if any(isnan, u ./ sum(u)) println("break -2.2 ", u); return -2, V, Δ, β, u end
     S.weights .= u ./ sum(u)
   end
 
@@ -113,6 +118,7 @@ function update(
     else
       ll = mLL!(Matrix{Float64}(undef, n, length(curr)), curr, validation)
     end
+    # if any(isnan, ll) println("break -3"); return -3, V, Δ, ll end
     if !isnothing(history) push!(history, ll) end
     println("Iteration $(learner.steps). η: $(learningrate), LL: $(ll)")
   end
@@ -188,11 +194,11 @@ function oupdate(
 
   if verbose && (learner.steps % 2 == 0)
     print("Training LL: ", ll/numrows, " | ")
-    n = size(validation, 1)
-    if n <= numrows
-      ll = mLL!(view(V, 1:n, :), curr, validation)
+    m = size(validation, 1)
+    if m <= batchsize
+      ll = mLL!(view(V, 1:m, :), curr, validation)
     else
-      ll = mLL!(Matrix{Float64}(undef, n, length(curr)), curr, validation)
+      ll = mLL!(Matrix{Float64}(undef, m, length(curr)), curr, validation)
     end
     if !isnothing(history) push!(history, ll) end
     println("Iteration $(learner.steps). η: $(learningrate), LL: $(ll)")
