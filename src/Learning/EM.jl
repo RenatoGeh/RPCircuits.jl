@@ -73,22 +73,40 @@ function update(
   # if any(isnan, V) || any(isnan, Δ) println("break -1"); return -1, V, Δ end
 
   # Update sum weights
+  log_n = log(numrows)
   Threads.@threads for i ∈ 1:length(sumnodes)
     s = sumnodes[i]
     S, Z = curr[s], prev[s]
     β = Vector{Float64}(undef, length(S.children))
-    infs = 0
+    # β = zeros(length(S.children))
+    # infs = 0
     for (j, c) ∈ enumerate(S.children)
+      v = view(V, :, c)
       β[j] = log(S.weights[j]) + logsumexp(view(Δ, :, s) .+ view(V, :, c) .- LL)
-      isinf(β[j]) && (infs += 1)
+      # for t ∈ 1:numrows
+        # β[j] += S.weights[j] * exp(Δ[t,s]) * exp(V[t,c] - LL[t])
+      # end
+      # isinf(β[j]) && (infs += 1)
     end
-    if infs == length(S.children) continue end
-    u = exp.(β .- logsumexp(β)) .+ smoothing
+    # if infs == length(S.children) continue end
+
+    # u = exp.(β .- log_n) .+ smoothing
+    # u ./= sum(u)
+    # u .*= learningrate
+    # u .+= (1.0 - learningrate) * S.weights
+    # Z.weights .= u ./ sum(u)
+
+    u = exp.(β .- log_n) .+ smoothing / length(β)
+    u .*= learningrate / sum(u)
+    u .+= (1.0 - learningrate) * S.weights
+    Z.weights .= u ./ sum(u)
+
+    # u = exp.(β .- logsumexp(β)) .+ smoothing
     # if any(isnan, u ./ sum(u)) println("break -2.1 ", u, β); return -2, V, Δ, β, u end
-    u ./= sum(u)
-    u .= learningrate .* u .+ (1.0-learningrate) .* Z.weights
+    # u ./= sum(u)
+    # u .= learningrate .* u .+ (1.0-learningrate) .* Z.weights
     # if any(isnan, u ./ sum(u)) println("break -2.2 ", u); return -2, V, Δ, β, u end
-    S.weights .= u ./ sum(u)
+    # S.weights .= u ./ sum(u)
   end
 
   # Update Gaussian parameters
@@ -128,7 +146,7 @@ function update(
   learner.prevscore = learner.score
   learner.score = -sum(LL) / numrows
 
-  return learner.prevscore - learner.score, V, Δ
+  return learner.prevscore - learner.score
 end
 export update
 
@@ -186,10 +204,20 @@ function oupdate(
     s = sumnodes[i]
     S, Z = curr[s], prev[s]
     B[i] .*= S.weights
-    β = B[i]
-    u = (β ./ sum(β)) .+ smoothing
-    u .= learningrate .* (u / sum(u)) .+ (1.0-learningrate) .* Z.weights
-    S.weights .= u / sum(u)
+    # u = (B[i] / numrows) .+ smoothing
+    # u ./= sum(u)
+    # u .*= learningrate
+    # u .+= (1.0 - learningrate) * S.weights
+    # Z.weights .= u ./ sum(u)
+
+    u = (B[i] / numrows) .+ smoothing / length(B[i])
+    u .*= learningrate / sum(u)
+    u .+= (1.0 - learningrate) * S.weights
+    Z.weights .= u ./ sum(u)
+
+    # u = (β ./ sum(β)) .+ smoothing
+    # u .= learningrate .* (u / sum(u)) .+ (1.0-learningrate) .* Z.weights
+    # S.weights .= u / sum(u)
   end
 
   if verbose && (learner.steps % 2 == 0)
@@ -212,6 +240,103 @@ function oupdate(
   return learner.prevscore - learner.score, V, Δ
 end
 export oupdate
+
+function old_update(
+  learner::SEM,
+  Data::AbstractMatrix,
+  learningrate::Float64 = 1.0,
+  smoothing::Float64 = 1e-4,
+  learngaussians::Bool = false,
+  minimumvariance::Float64 = learner.minimumvariance;
+  verbose::Bool = false, validation::AbstractMatrix = Data, history = nothing
+)
+
+  numrows, numcols = size(Data)
+
+  curr = learner.circ.C
+  prev = learner.circ.P
+  score = 0.0
+  sumnodes = learner.circ.S
+  if learngaussians
+    gs = learner.circ.gauss
+    gaussiannodes = gs.G
+    if length(gaussiannodes) > 0
+        Δ = Dict{UInt, Vector{Float64}}(x => Vector{Float64}(undef, numrows) for x ∈ gaussiannodes)
+    end
+  end
+  diff = learner.circ.D
+  values = learner.circ.V
+
+  for t in 1:numrows
+    datum = view(Data, t, :)
+    lv = cplogpdf!(values, curr, learner.circ.L, datum) # parallelized version
+    @assert isfinite(lv) "logvalue of datum $t is not finite: $lv"
+    score += lv
+    backpropagate_tree!(diff, curr, learner.circ.L, values)
+    Threads.@threads for l in 1:length(sumnodes) # update each node in parallel
+      i = sumnodes[l]
+      n = curr[i]
+      p = prev[i]
+      @inbounds for (j, c) in enumerate(n.children)
+        u = values[c]
+        if isfinite(u)
+          δ = n.weights[j] * diff[i] * exp(u - lv) # improvement
+          if !isfinite(δ) δ = 0.0 end
+        else
+          δ = 0.0
+        end
+        p.weights[j] = ((t - 1) / t) * p.weights[j] + δ / t # running average for improved precision
+      end
+    end
+    if learngaussians
+      Threads.@threads for n in gaussiannodes
+        Δ[n][t] = log(diff[n])+(values[n]-lv)
+      end
+    end
+  end
+
+  Threads.@threads for i in 1:length(sumnodes)
+    j = sumnodes[i]
+    n = curr[j]
+    p = prev[j]
+    p.weights .+= smoothing / length(p.weights) # smoothing factor to prevent degenerate probabilities
+    p.weights .*= learningrate / sum(p.weights) # normalize weights
+    # online update: θ[t+1] = (1-η)*θ[t] + η*update(θ[t])
+    p.weights .+= (1.0 - learningrate) * n.weights
+    p.weights ./= sum(p.weights)
+    # @assert sum(circ_n[i].weights) ≈ 1.0 "Unnormalized weight vector at node $i: $(sum(circ_n[i].weights)) | $(circ_n[i].weights) | $(circ_p[i].weights)"
+  end
+  if learngaussians
+    Threads.@threads for n in gaussiannodes
+      p = prev[n]
+      cg = curr[n]
+      α = Δ[n]
+      α .= exp.(α .- logsumexp(α))
+      X = view(Data, :, p.scope)
+      mean_u = learningrate*sum(α .* X) + (1-learningrate)*cg.mean
+      var_u = learningrate*sum(α .* ((X .- mean_u) .^ 2)) + (1-learningrate)*cg.variance
+      if !(isnan(mean_u) || isnan(var_u))
+        @inbounds p.mean = mean_u
+        @inbounds p.variance = var_u
+      end
+      if !(p.variance > minimumvariance) p.variance = minimumvariance end
+    end
+  end
+
+  if verbose && (learner.steps % 2 == 0)
+    ll = pNLL(values, curr, learner.circ.L, validation)
+    if !isnothing(history) push!(history, ll) end
+    println("Iteration $(learner.steps). η: $(learningrate), NLL: $(ll)")
+  end
+
+  swap!(learner.circ)
+  learner.steps += 1
+  learner.prevscore = learner.score
+  learner.score = -score / numrows
+
+  return learner.prevscore - learner.score
+end
+export old_update
 
 # Parameter learning by Accelerated Expectation-Maximimzation (SQUAREM)
 # RAVI VARADHAN & CHRISTOPHE ROLAND, Simple and Globally Convergent Methods for Accelerating the Convergence of Any EM Algorithm, J. Scand J Statist 2008

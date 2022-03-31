@@ -65,7 +65,7 @@ end
 
 function pbackpropagate_tree!(Δ::AbstractMatrix{<:Real}, C::Vector{Node}, V::AbstractMatrix{<:Real};
     indicators::Union{AbstractVector{<:Integer}, Nothing} = nothing)
-  lim = -floatmax(eltype(Δ))
+  # lim = -floatmax(eltype(Δ))
   if isnothing(indicators)
     Δ .= 0.0
   else
@@ -80,6 +80,7 @@ function pbackpropagate_tree!(Δ::AbstractMatrix{<:Real}, C::Vector{Node}, V::Ab
   L = ReentrantLock()
   Threads.@threads for j ∈ 1:length(I)
     R = I[j]
+    infs = BitVector(undef, length(R))
     # Columns: nodes
     for i ∈ m:-1:1 # from root to leaves
       N = C[i]
@@ -99,11 +100,21 @@ function pbackpropagate_tree!(Δ::AbstractMatrix{<:Real}, C::Vector{Node}, V::Ab
       elseif isprod(N)
         v = view(V, R, i)
         for c ∈ N.children
-          δ = d .+ v .- view(V, R, c)
-          setinvalid!(δ, lim)
+          u = view(V, R, c)
+          map!(isinf, infs, u)
+          δ = Vector{Float64}(undef, length(R))
+          noninfs = findall(!, infs)
+          (length(noninfs) > 0) && (δ[noninfs] .= view(d, noninfs) .+ view(v, noninfs) .- view(u, noninfs))
+          infs_idx = findall(infs)
+          if length(infs_idx) > 0
+            for j ∈ infs_idx
+              δ[j] = d[j] + sum(V[R[j],x] for x ∈ N.children if x ≠ c)
+            end
+          end
+          # setinvalid!(δ, lim)
           if C[c] isa Indicator
             contains_indicators = true
-            lock(L); try Δ[R,c] .*= exp.(δ) finally unlock(L) end
+            lock(L); try Δ[R,c] .+= exp.(δ) finally unlock(L) end
           else
             Δ[R,c] .= δ
           end
@@ -121,7 +132,7 @@ end
 
 function backpropagate_tree!(Δ::AbstractMatrix{<:Real}, C::Vector{Node}, V::AbstractMatrix{<:Real})
   lim = -floatmax(eltype(Δ))
-  Δ[:,end] .= 0.0
+  Δ .= 0.0
   n, m = size(Δ)
   contains_indicators = false
   # Columns: nodes
@@ -162,7 +173,7 @@ function backpropagate_tree!(Δ::AbstractMatrix{<:Real}, C::Vector{Node}, V::Abs
   return nothing
 end
 
-function backpropagate_tree!(diff::Vector{Float64}, circ::Vector{Node}, layers::Vector{Vector{UInt}}, values::Vector{Float64})
+function backpropagate_tree!(diff::AbstractVector{<:Real}, circ::Vector{Node}, layers::Vector{Vector{UInt}}, values::AbstractVector{Float64})
   fill!(diff, 0.0)
   @inbounds diff[end] = 1.0
   for l in 1:length(layers)

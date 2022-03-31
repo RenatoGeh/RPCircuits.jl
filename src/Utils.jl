@@ -231,3 +231,4 @@ export prepare_step_indices
 
 @inline isinvalid(x::Real)::Bool = isinf(x) || isnan(x)
 @inline setinvalid!(X::AbstractVector{<:Real}, y::Real = -floatmax(eltype(X)))::Nothing = (X[map(isinvalid, X)] .= y; nothing)
+@inline inf2zero(x::Real)::Real = isinf(x) ? 0.0 : x
