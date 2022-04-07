@@ -237,36 +237,34 @@ function sid_rulep(S::AbstractMatrix{<:Real}, c::Float64, trials::Int = 10)::Uni
   Δ = norm(S[x,:] - S[y,:]); Δ *= Δ
   me = vec(mean(S; dims = 1))
   Δ_A = avgdiam(S, me)
-  if Δ <= c*Δ_A
-    best_diff, best_f, best_a, best_θ = Inf, nothing, nothing, nothing
-    for j ∈ 1:trials
-      v = randunit(m)
-      a = sort!([dot(v, x) for x ∈ eachrow(S)])
-      s_μ_1, s_μ_2 = a[1]*a[1], sum(a[2:end] .* a[2:end])
-      μ_1, μ_2 = a[1], sum(a[2:end])
-      i_min, c_min = -1, Inf
-      for i ∈ 1:n-1
-        δ_1, δ_2 = μ_1/i, μ_2/(n-i)
-        p, q = s_μ_1-μ_1*δ_1, s_μ_2-μ_2*δ_2
-        c = p + q
-        if c < c_min
-          i_min, c_min = i, c
-        end
-        a_i = a[i+1]
-        μ_1 += a_i
-        μ_2 -= a_i
-        s_μ_1 += a_i*a_i
-        s_μ_2 -= a_i*a_i
+  best_diff, best_f, best_a, best_θ = Inf, nothing, nothing, nothing
+  for j ∈ 1:trials
+    v = randunit(m)
+    a = sort!([dot(v, x) for x ∈ eachrow(S)])
+    s_μ_1, s_μ_2 = a[1]*a[1], sum(a[2:end] .* a[2:end])
+    μ_1, μ_2 = a[1], sum(a[2:end])
+    i_min, c_min = -1, Inf
+    for i ∈ 1:n-1
+      δ_1, δ_2 = μ_1/i, μ_2/(n-i)
+      p, q = s_μ_1-μ_1*δ_1, s_μ_2-μ_2*δ_2
+      c = p + q
+      if c < c_min
+        i_min, c_min = i, c
       end
-      θ = (a[i_min]+a[i_min+1])/2
-      f = x::AbstractVector{<:Real} -> dot(v, x) <= θ
-      P, Q = select(f, S)
-      d_P, d_Q = avgdiam(P), avgdiam(Q)
-      d = abs(d_P*d_P-d_Q*d_Q)
-      if d <= best_diff best_diff, best_f, best_a, best_θ = d, f, v, θ end
+      a_i = a[i+1]
+      μ_1 += a_i
+      μ_2 -= a_i
+      s_μ_1 += a_i*a_i
+      s_μ_2 -= a_i*a_i
     end
-    return best_a, best_θ, best_f
+    θ = (a[i_min]+a[i_min+1])/2
+    f = x::AbstractVector{<:Real} -> dot(v, x) <= θ
+    P, Q = select(f, S)
+    d_P, d_Q = avgdiam(P), avgdiam(Q)
+    d = abs(d_P*d_P-d_Q*d_Q)
+    if d <= best_diff best_diff, best_f, best_a, best_θ = d, f, v, θ end
   end
+  return best_a, best_θ, best_f
   # This is the case when most (if not all) of the datapoints are clustered into a single point.
   # Can't model this case only with hyperplanes. Return a nothing so that we can turn this into a
   # leaf node in the probabilistic circuit.

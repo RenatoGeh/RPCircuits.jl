@@ -1,9 +1,9 @@
-struct CSum <: Inner
+struct CSum <: ASum
   children::Vector{UInt}
   weights::Vector{Float64}
 end
 
-struct CProduct <: Inner
+struct CProduct <: AProduct
   children::Vector{UInt}
 end
 

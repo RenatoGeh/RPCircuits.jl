@@ -5,12 +5,14 @@ Implement a labeled sparse matrix.
 """
 abstract type Node end
 abstract type Inner <: Node end
+abstract type ASum <: Inner end
+abstract type AProduct <: Inner end
 export Node, Inner
 
 """
 Sum node data type
 """
-mutable struct Sum <: Inner
+mutable struct Sum <: ASum
   children::Vector{Node}
   weights::Vector{Float64}
   Sum(ch::AbstractVector{<:Node}, w::AbstractVector{Float64}) = new(ch, w)
@@ -24,7 +26,7 @@ export Sum
 """
 Product node data type
 """
-struct Product <: Inner
+struct Product <: AProduct
   children::Vector{Node}
   Product(ch::AbstractVector{<:Node}) = new(ch)
   Product(ch::Tuple) = new([c for c ∈ ch])

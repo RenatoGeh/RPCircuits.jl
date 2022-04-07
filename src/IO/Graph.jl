@@ -3,14 +3,14 @@
 """
 Prints out Node content
 """
-function Base.show(io::IO, n::Sum)
+function Base.show(io::IO, n::ASum)
   print(io, "+")
   for i in 1:length(n.children)
     print(io, " $i $(n.weights[i])")
   end
 end
 
-function Base.show(io::IO, n::Product)
+function Base.show(io::IO, n::AProduct)
   print(io, "*")
   for i in 1:length(n.children)
     print(io, " $i")

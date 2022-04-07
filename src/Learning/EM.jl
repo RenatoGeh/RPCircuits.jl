@@ -174,7 +174,14 @@ function oupdate(
 
   batches = prepare_step_indices(numrows, batchsize)
   B = [zeros(length(curr[s].children)) for s ∈ sumnodes]
-  #learngaussians && (A = zeros(length(gaussiannodes)))
+
+  if learngaussians
+    α_norm = 0.0
+    α = Vector{Float64}(undef, length(batchsize))
+    μ = zeros(length(gaussiannodes))
+    σ = zeros(length(gaussiannodes))
+  end
+
   V = Matrix{Float64}(undef, batchsize, length(curr))
   Δ = Matrix{Float64}(undef, batchsize, length(curr))
   n = size(V, 1)
@@ -186,7 +193,8 @@ function oupdate(
     else
       V_b, Δ_b = V, Δ
     end
-    LL = mplogpdf!(V_b, curr, view(Data, I, :))
+    batch = view(Data, I, :)
+    LL = mplogpdf!(V_b, curr, batch)
     pbackpropagate_tree!(Δ_b, curr, V_b)
 
     Threads.@threads for i ∈ 1:length(sumnodes)
@@ -194,6 +202,16 @@ function oupdate(
       S = curr[s]
       for (j, c) ∈ enumerate(S.children)
         B[i][j] += sum(exp.(view(Δ_b, :, s) .+ view(V_b, :, c) .- LL))
+      end
+    end
+
+    if learngaussians
+      Threads.@threads for i ∈ 1:length(gaussiannodes)
+        g = gaussiannodes[i]
+        α .= exp.(view(Δ_b, :, g) .+ view(V_b, :, g) .- LL)
+        α_norm += sum(α)
+        μ[i] .+= α .* batch
+        σ[i] .+= α .* (batch .- a)
       end
     end
 

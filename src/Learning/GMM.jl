@@ -25,9 +25,10 @@ end
 
 Learns a multivariate Gaussian mixture model with `k` components from data `D`.
 """
-function learn_multi_gmm(D::AbstractMatrix{<:Real}; k::Int = 3, kmeans_iter::Int = 50,
-    em_iter::Int = 100, smoothing::Float64 = 0.1, minvar::Float64 = 1e-3, verbose::Bool = true,
-    validation::AbstractMatrix{<:Real} = D, V::Union{UnitRange, AbstractVector{<:Integer}} = 1:size(D, 2))::Node
+function learn_multi_gmm(D::AbstractMatrix{<:Real}; k::Int = 3, kmeans_iter::Integer = 50,
+    minibatch_iter::Integer = 100, em_iter::Integer = 30, smoothing::Float64 = 1e-3,
+    minvar::Float64 = 1e-3, verbose::Bool = true, validation::AbstractMatrix{<:Real} = D,
+    V::Union{UnitRange, AbstractVector{<:Integer}} = 1:size(D, 2), batchsize::Integer = 100)::Node
   if size(D, 1) < k D = repeat(D, 2*k) end
   gmm = GaussianMixtures.GMM(k, Matrix(D); kind = :diag, method = :kmeans, nInit = kmeans_iter, nIter = 0)
   # GaussianMixtures.em!(gmm, D; nIter = 100, varfloor = 1e-3)
@@ -43,9 +44,20 @@ function learn_multi_gmm(D::AbstractMatrix{<:Real}; k::Int = 3, kmeans_iter::Int
     K[i] = Product(G)
   end
   C = Sum(K, w)
-  if em_iter <= 0 return C end
   # println("Initial LL: ", -NLL(C, validation))
   L = SEM(C; gauss = true)
+  if minibatch_iter > 0
+    ranges = prepare_step_indices(n, batchsize)
+    indices = collect(1:n)
+    while L.steps < minibatch_iter
+      if L.steps % length(ranges) == 0 shuffle!(indices) end
+      I = view(indices, ranges[(L.steps % length(ranges)) + 1])
+      batch = view(D, I, :)
+      η = 0.975^L.steps
+      update(L, batch, η, smoothing, true, minvar; verbose, validation)
+    end
+  end
+  if em_iter <= 0 return C end
   while L.steps < em_iter
     # print("Training LL: ", -NLL(C, D), " -> ")
     update(L, D, 1.0, smoothing, true, minvar; verbose, validation)
