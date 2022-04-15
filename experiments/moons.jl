@@ -15,11 +15,11 @@ function learn_parameters!(C::Node, R::AbstractMatrix{<:Real}, T::AbstractMatrix
     sid = rand(1:(length(I)-batchsize))
     B = view(R, I[sid:(sid+batchsize-1)], :)
     η = 0.975^L.steps
-    update(L, B, η, smoothing; verbose, validation = T)
+    update(L, B; learningrate=η, smoothing=smoothing, verbose=verbose, validation=T)
   end
   println("Full EM...")
   while L.steps < full_steps
-    update(L, R, 1.0, smoothing; verbose, validation = T)
+    update(L, R; learningrate=1.0, smoothing=smoothing, verbose=verbose, validation=T)
   end
   return C
 end

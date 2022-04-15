@@ -44,11 +44,11 @@ circ[i].weights[j] = circ[i].weights[k] * backpropagate(circ)[i]/sum(circ[i].wei
 """
 function update(
   learner::SEM,
-  Data::AbstractMatrix,
+  Data::AbstractMatrix;
   learningrate::Float64 = 1.0,
   smoothing::Float64 = 1e-4,
   learngaussians::Bool = false,
-  minimumvariance::Float64 = learner.minimumvariance;
+  minimumvariance::Float64 = learner.minimumvariance,
   verbose::Bool = false, validation::AbstractMatrix = Data, history = nothing, binary::Bool = false
 )
 
@@ -154,11 +154,11 @@ export update
 function oupdate(
   learner::SEM,
   Data::AbstractMatrix,
-  batchsize::Integer,
+  batchsize::Integer;
   learningrate::Float64 = 1.0,
   smoothing::Float64 = 1e-4,
   learngaussians::Bool = false,
-  minimumvariance::Float64 = learner.minimumvariance;
+  minimumvariance::Float64 = learner.minimumvariance,
   verbose::Bool = false, validation::AbstractMatrix = Data, history = nothing
 )
 
@@ -261,11 +261,11 @@ export oupdate
 
 function old_update(
   learner::SEM,
-  Data::AbstractMatrix,
+  Data::AbstractMatrix;
   learningrate::Float64 = 1.0,
   smoothing::Float64 = 1e-4,
   learngaussians::Bool = false,
-  minimumvariance::Float64 = learner.minimumvariance;
+  minimumvariance::Float64 = learner.minimumvariance,
   verbose::Bool = false, validation::AbstractMatrix = Data, history = nothing
 )
 
@@ -419,7 +419,7 @@ circ[i].weights[j] = circ[i].weights[k] * backpropagate(circ)[i]/sum(circ[i].wei
 """
 function update(
   learner::SQUAREM,
-  Data::AbstractMatrix,
+  Data::AbstractMatrix;
   smoothing::Float64 = 0.0001,
   learngaussians::Bool = false, # not implemented
   minimumvariance::Float64 = learner.minimumvariance,

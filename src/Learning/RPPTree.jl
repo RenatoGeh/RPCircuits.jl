@@ -361,7 +361,7 @@ function prune!(r::Node, D::AbstractMatrix{<:Real}, n::Int; em_steps::Integer = 
   while L.steps < em_steps
     sid = rand(1:(m-batch))
     B = view(D, I[sid:(sid+batch-1)], :)
-    update(L, B, η; verbose, validation)
+    update(L, B; learningrate=η, verbose=verbose, validation=validation)
     η *= decay
   end
   # TODO
@@ -379,7 +379,7 @@ function mini_em(C::Node, D::AbstractMatrix{<:Real}; steps::Integer = 10, decay:
     sid = rand(1:(length(indices)-batch_size))
     batch = view(D, indices[sid:(sid+batch_size-1)], :)
     η *= decay
-    update(L, batch, η, smoothing, learngaussians, minimumvariance; verbose = true, validation)
+    update(L, batch; learningrate=η, smoothing=smoothing, learngaussians=learngaussians, minimumvariance=minimumvariance, verbose=true, validation=validation)
   end
   return pNLL(L.circ.V, L.circ.C, L.circ.L, validation)
 end

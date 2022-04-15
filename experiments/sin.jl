@@ -13,7 +13,7 @@ function learn_parameters!(C::Circuit, R, V; batchsize = 500)
     sid = rand(1:(length(indices)-batchsize))
     batch = view(R, indices[sid:(sid+batchsize-1)], :)
     η = 0.975^learner.steps #max(0.95^learner.steps, 0.3)
-    update(learner, batch, η)
+    update(learner, batch; learningrate=η)
     testnll = NLL(C, V)
     batchnll = NLL(C, batch)
     # running average NLL

@@ -173,6 +173,51 @@ function backpropagate_tree!(Δ::AbstractMatrix{<:Real}, C::Vector{Node}, V::Abs
   return nothing
 end
 
+```
+  Marginalized version of backpropagate_tree.
+```
+function norm_backpropagate_tree!(marg_Δ::AbstractVector{<:Real}, C::Vector{Node}, marg_V::AbstractVector{<:Real})
+  marg_Δ .= 0.0
+  m = length(marg_Δ)
+  contains_indicators = false
+  # Columns: nodes
+  for i ∈ m:-1:1 # from root to leaves
+    N = C[i]
+    d = marg_Δ[i]
+    if isleaf(N) continue end
+    if issum(N)
+      for (j, c) ∈ enumerate(N.children)
+        if C[c] isa Indicator
+          # Indicator nodes are computed differently, since they may repeat (and so the structure is not
+          # tree-shaped). Compute in normal space so as to minimize numerical errors.
+          constains_indicators = true
+          marg_Δ[c] += N.weights[j] * exp(d)
+        else
+          marg_Δ[c] = log(N.weights[j]) + d
+        end
+      end
+    elseif isprod(N)
+      v = marg_V[i]
+      for c ∈ N.children
+        δ = d + v - marg_V[c]
+        isinvalid(δ)
+        if C[c] isa Indicator
+          contains_indicators = true
+          marg_Δ[c] *= exp(δ)
+        else
+          marg_Δ[c] = δ
+        end
+      end
+    end
+  end
+  if contains_indicators
+    for i ∈ 1:m
+      (C[i] isa Indicator) && (marg_Δ[i] = log(marg_Δ[i]))
+    end
+  end
+  return nothing
+end
+
 function backpropagate_tree!(diff::AbstractVector{<:Real}, circ::Vector{Node}, layers::Vector{Vector{UInt}}, values::AbstractVector{Float64})
   fill!(diff, 0.0)
   @inbounds diff[end] = 1.0
