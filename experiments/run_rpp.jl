@@ -70,15 +70,15 @@ function run_bin()
       I = view(indices, ranges[(learner.steps % length(ranges)) + 1])
       batch = view(R, I, :)
       η = 0.975^learner.steps
-      update(learner, batch, η, smoothing; verbose, validation = T, history = H)
-      # update(learner, batch, η, 1e-4; verbose = false, validation = V)
+      update(learner, batch; learningrate=η, smoothing=smoothing, verbose=verbose, validation=T, history=H)
+      # update(learner, batch; learningrate=η, smoothing=1e-4, verbose=false, validation=V)
     end
     tee(out_data, "Batch EM LL: " * string(-NLL(C, T)))
     tee(out_data, "Full EM...")
     η = 1.0
     em_time = @elapsed while learner.steps < full_em_steps
-      if datasets[data_idx] == "c20ng" oupdate(learner, R, 2000, η, smoothing; verbose, validation = T)
-      else update(learner, R, η, smoothing; verbose, validation = T) end
+      if datasets[data_idx] == "c20ng" oupdate(learner, R, 2000; learningrate=η, smoothing=smoothing, verbose=verbose, validation=T)
+      else update(learner, R; learningrate=η, smoothing=smoothing, verbose=verbose, validation=T) end
     end
     LL[data_idx] = -NLL(C, T)
     push!(H, -LL[data_idx])
@@ -99,11 +99,11 @@ function run_bin()
       # sid = rand(1:(length(indices)-batchsize))
       # batch = view(R, indices[sid:(sid+batchsize-1)], :)
       # η = 0.975^learner.steps
-      # update(learner, batch, η, 1e-4; verbose, validation = T, history = H)
+      # update(learner, batch; learningrate=η, smoothing=1e-4, verbose=verbose, validation=T, history=H)
     # end
     # η = 1.0
     # em_time = @elapsed while learner.steps < full_em_steps
-      # update(learner, R, η; verbose = false, validation = V)
+      # update(learner, R; learningrate=η, verbose=false, validation=V)
     # end
     # push!(H, NLL(C, T))
     # history_rand[data_idx] = H
@@ -175,13 +175,13 @@ function run_cont()
         sid = rand(1:(length(indices)-l_batch))
         batch = view(R, indices[sid:(sid+l_batch-1)], :)
         η = 0.975^learner.steps
-        update(learner, batch, η, smoothing, true, minimumvariance; verbose, validation = T)
+        update(learner, batch; learningrate=η, smoothing=smoothing, learngaussians=true, minimumvariance=minimumvariance, verbose=verbose, validation=T)
       end
       tee(out_data, "Batch EM LL: " * string(-NLL(C, T)))
       tee(out_data, "Full EM...")
       η = 1.0
       em_time = @elapsed while learner.steps < full_em_steps
-        update(learner, R, η, smoothing, true, minimumvariance; verbose, validation = T)
+        update(learner, R; learningrate=η, smoothing=smoothing, learngaussians=true, minimumvariance=minimumvariance, verbose=verbose, validation=T)
       end
       # rescale_gauss!(C, E)
       # lls[i] = -NLL(C, Q[i][1])
@@ -198,13 +198,13 @@ function run_cont()
         # sid = rand(1:(length(indices)-l_batch))
         # batch = view(R, indices[sid:(sid+l_batch-1)], :)
         # η = 0.975^learner.steps
-        # update(learner, batch, η, smoothing, true, minimumvariance; verbose, validation = T)
+        # update(learner, batch; learningrate=η, smoothing=smoothing, learngaussians=true, minimumvariance=minimumvariance, verbose=verbose, validation=T)
       # end
       # tee(out_data, "Batch EM LL: " * string(-NLL(C_r, T)))
       # tee(out_data, "Full EM...")
       # η = 1.0
       # em_time = @elapsed while learner.steps < full_em_steps
-        # update(learner, R, η, smoothing, true, minimumvariance; verbose, validation = T)
+        # update(learner, R; learningrate=η, smoothing=smoothing, learngaussians=true, minimumvariance=minimumvariance, verbose=verbose, validation=T)
       # end
       # lls_rand[i] = -NLL(C_r, T)
 
@@ -320,14 +320,14 @@ function run_rand_bin()
       sid = rand(1:(length(indices)-batchsize))
       batch = view(R, indices[sid:(sid+batchsize-1)], :)
       η = 0.975^learner.steps
-      update(learner, batch, η, 1e-4; verbose, validation = T, history = H)
-      # update(learner, batch, η, 1e-4; verbose = false, validation = V)
+      update(learner, batch; learningrate=η, smoothing=1e-4, verbose=verbose, validation=T, history=H)
+      # update(learner, batch; learningrate=η, smoothing=1e-4, verbose=false, validation=V)
     end
     tee(out_data, "Batch EM LL: " * string(-NLL(C, T)))
     tee(out_data, "Full EM...")
     η = 1.0
     em_time = @elapsed while learner.steps < full_em_steps
-      update(learner, R, η; verbose = false, validation = V)
+      update(learner, R; learningrate=η, verbose=false, validation=V)
     end
     LL[data_idx] = -NLL(C, T)
     push!(H, -LL[data_idx])

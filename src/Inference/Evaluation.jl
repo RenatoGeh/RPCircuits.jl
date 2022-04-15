@@ -149,7 +149,7 @@ function mplogpdf!(V::AbstractMatrix{<:Real}, C::Vector{Node}, D::AbstractMatrix
   return view(V, :, k)
 end
 
-"Vectorized form of cplogpdf."
+"Vectorized form of cplogpdf. Assumes normalized weights"
 function mlogpdf!(V::AbstractMatrix{<:Real}, C::Vector{Node}, D::AbstractMatrix{<:Real})
   n, k = size(V)
   # Columns: nodes
@@ -164,6 +164,23 @@ function mlogpdf!(V::AbstractMatrix{<:Real}, C::Vector{Node}, D::AbstractMatrix{
     end
   end
   return view(V, :, k)
+end
+
+" Calculates the (log of the) normalization constant of the PC S. Marginalized form of mlogpdf."
+function log_norm_const!(marg_V::AbstractVector{<:Real}, C::Vector{Node})
+  k = length(marg_V)
+  # Columns: nodes
+  @inbounds for i ∈ 1:k # from leaves to root
+    N = C[i]
+    if isprod(N)
+      @inbounds marg_V[i] = sum(marg_V[N.children])
+    elseif issum(N)
+      @inbounds marg_V[i] = logsumexp(log.(N.weights) .+ marg_V[N.children])
+    else # is leaf
+      @inbounds marg_V[i] = 0
+    end
+  end
+  return marg_V[k]
 end
 
 function cplogpdf!(

@@ -89,7 +89,7 @@ function run_reg_em()
       sid = rand(1:(length(indices)-batchsize))
       batch = view(R, indices[sid:(sid+batchsize-1)], :)
       η = 0.975^learner.steps
-      update(learner, batch, η)
+      update(learner, batch; learningrate=η)
       if verbose
         testnll = NLL(C, V)
         batchnll = NLL(C, batch)
@@ -105,7 +105,7 @@ function run_reg_em()
     tee(out_data, "Full EM...")
     η = 1.0
     while learner.steps < full_em_steps
-      update(learner, R, η)
+      update(learner, R; learningrate=η)
       if verbose
         testnll = NLL(C, V)
         batchnll = NLL(C, R)
@@ -149,7 +149,7 @@ function run_em()
         batch = R
         η = 1.0
       end
-      update(learner, batch, η, 1e-4, true, 0.01)
+      update(learner, batch; learningrate=η, smoothing=1e-4, learngaussians=true, minimumvariance=0.01)
       println("Iteration: ", learner.steps)
     end
     LL[data_idx] = -NLL(C, T)

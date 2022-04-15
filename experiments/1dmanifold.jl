@@ -16,7 +16,7 @@ function learn_parameters!(C::Circuit, L, T; batchsize = 100, gauss = false, min
       batch = L
       η = 1.0
     end
-    update(learner, batch, η, 1e-4, gauss, min_var)
+    update(learner, batch; learningrate=η, smoothing=1e-4, learngaussians=gauss, minimumvariance=min_var)
     # testnll = NLL(C, T)
     # batchnll = NLL(C, L)
     # running average NLL

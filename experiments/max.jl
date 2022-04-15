@@ -22,7 +22,7 @@ for data_idx ∈ 1:length(datasets)
     sid = rand(1:(length(indices)-batchsize))
     batch = view(R, indices[sid:(sid+batchsize-1)], :)
     η = 0.975^learner.steps
-    update(learner, batch, η)
+    update(learner, batch; learningrate=η)
     testnll = NLL(C, V)
     batchnll = NLL(C, batch)
     # running average NLL
@@ -34,7 +34,7 @@ for data_idx ∈ 1:length(datasets)
   println("LL: ", -NLL(C, T) )
   η = 1.0
   while learner.steps < 100
-    update(learner, R, η)
+    update(learner, R; learningrate=η)
     testnll = NLL(C, V)
     batchnll = NLL(C, R)
     # running average NLL
