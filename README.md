@@ -1,43 +1,48 @@
 RPCircuits.jl
 =============
 
-A Julia package for learning/constructing [Probabilistic Circuits][probcirc20]. Particularly,
-*RPCircuits* implements:
+A Julia package for efficiently building and using [Probabilistic Circuits][probcirc20]. Particularly,
+*RPCircuits.jl* implements:
 
-* Tools for building probabilistic circuit
+* Sparse and dense data structures for representing probabilistic circuits
+* Multithread inference routines for likelihood and marginal computation   
 * EM and gradient ascent parameter learning
-* Structure learning for probabilistic circuits
-* Probabilistic queries
+* Linear-time structure learning for probabilistic circuits
 
-**Note:** This repository contains everything you need to reproduce the paper "[Fast And Accurate
-Learning of Probabilistic Circuits by Random Projections][link_artigo]" and LearnRP ("[Scalable
-Learning of Probabilistic Circuits][link_msc]", Chapter 5).
+**In particular**, this repository reproduces the results in "[Fast And Accurate
+Learning of Probabilistic Circuits by Random Projections][link_article]" and in Chapter 5 of "[Scalable
+Learning of Probabilistic Circuits][link_msc]".
 
 [link_msc]: https://www.teses.usp.br/teses/disponiveis/45/45134/tde-23052022-122922/en.php
-[link_artigo]: https://www.ime.usp.br/~renatolg/docs/geh21b_paper.pdf
+[link_article]: https://www.ime.usp.br/~renatolg/docs/geh21b_paper.pdf
 [probcirc20]: http://starai.cs.ucla.edu/papers/ProbCirc20.pdf
 
 ## Quick Tutorial
 
-You may either install `RPCircuits` with `julia -e 'using Pkg; Pkg.add("/path/to/RPCircuits")'`
-or use it locally without installation, in which case you will need to `activate` `RPCircuits`
-for every Julia session (see [Installation](#installation) for more info):
+The package is currently not registered in Julia's general registry. 
+To use it, you need to clone this repository locally then either install it with 
+```bash
+julia -e 'using Pkg; Pkg.add("/path/to/RPCircuits")'
+```
+
+Alternatively, you can use the package without installing by mannually activating its environment. 
+See [Installation](#installation) for more information.
+
+As usual, to use the package add the following line to your Julia program:
 
 ```julia
-# Activate RPCircuits
-using Pkg; Pkg.activate("/path/to/RPCircuits")
-
-# We may now use RPCircuits as normal
 using RPCircuits
-
 ```
 
 ### Manually building circuits
 
-We begin by creating four indicator leaf nodes.
+We begin by creating a simple circuit representing the polynomial
+$$ f(x,y,\bar{x},\bar{y}) = (xy + x\bar{y} + \bar{x}y + \bar{x}\bar{y})/4 $$
+over four indicator functions for 0/1-valued variables $X$ and $Y$.
 
+In `RPCircuits`, variables are represented by integers `1,2,...` and their values as floats `0.0, 1.0` (irrespective of the variable being categorical or numerical). To create the above indicator functions, we can use:
 ```julia
-julia> a, b, na, nb = Indicator(1, 1.0), Indicator(2, 1.0), Indicator(1, 0.0), Indicator(2, 0.0)
+julia> x, y, x̄, ȳ = Indicator(1, 1.0), Indicator(2, 1.0), Indicator(1, 0.0), Indicator(2, 0.0)
 (indicator 1 1.0, indicator 2 1.0, indicator 1 0.0, indicator 2 0.0)
 ```
 The `Indicator` function takes 2 positional arguments and a keyword argument. The first two
@@ -46,26 +51,27 @@ the node outputs `true` when the variable is set to `value`. The keyword argumen
 a maximum discrepancy when evaluating the indicator at a given value (its default value is
 `1e-6`.).
 
-As an indicator function, we can evaluate each node on various inputs.
+To evaluate any node for a given configuration of its input, we use function-like call. For example, 
+to evaluate the indicators on various inputs, we use:
 ```julia
-julia> a(1,1), b(0,0), na(0,1), nb(1,0)
+julia> x(1,1), y(0,0), x̄(0,1), ȳ(1,0)
 (1.0, 0.0, 1.0, 1.0)
 ```
+Note that the syntax above takes the corresponding value as defined in the creation of the `Indicator` node. 
+For instance, the call `ȳ(1,0)` looks at the `2`nd argument (`0` in this case) and whether 
+it matches the indicator `value` (`0.0` in this case). 
 
-Since the purpose of this package is to enable construction and learning of Probabilistic, we show
-next how to create `product` and `sum` nodes, and how to build circuits from a bottom-up approach.
-First, we have four product nodes with all combinations of `a`, `b` and their negations.
+Next, we create four product nodes to represent the terms in the polynomial $f$:
 ```julia
-julia> P1, P2, P3, P4 = Product([a,b]), Product([a,nb]), Product([na,b]), Product([na,nb])
+julia> P1, P2, P3, P4 = Product([x,y]), Product([x,ȳ]), Product([x̄,y]), Product([x̄,ȳ])
 (* 1 2, * 1 2, * 1 2, * 1 2)
 ```
-The `Product` function takes a vector `v = [v1,..., vn]` of nodes as inputs, and creates a product
-node `P` with children `v1,...,vn`.
+The `Product` function takes a vector `v = [v1,..., vn]` of nodes as inputs and returns the respective product
+node.
 
-Next, we create a sum node `S` whose children are `P1`, `P2`, `P3` and `P4`, and has respective
-weights `0.25`, `0.25`, `0.25`, `0.25`.
+To finish building our representation of $f$, we create a weighted sum of the four product nodes with uniform weights :
 ```julia
-julia> S = Sum([P1,P2,P3,P4], [0.25,0.25,0.25,0.25])
+julia> f = Sum([P1,P2,P3,P4], [0.25,0.25,0.25,0.25])
 Circuit with 9 nodes (1 sum, 4 products, 4 leaves) and 2 variables:
   1 : + 1 0.25 2 0.25 3 0.25 4 0.25
   2 : * 1 2
@@ -83,32 +89,30 @@ the respective `weights`.
 
 ### Learning the parameters of circuits
 
-One of the main purposes of this package is learning of Probabilistic Circuits. We first start out
-with a fixed structure and learn its sum weights. Taking the same structure as before as a toy
-example, let's set the sum weights to `weights = [0.4, 0.3, 0.2, 0.1]` and call this new circuit
-the *target* distribution `f`. We next sample from this circuit to produce a dataset.
+One of the main purposes of this package is learning of Probabilistic Circuits from data. 
+Parameter learning takes an initial probabilistic circuit and a dataset estimates the weight by maximum likelihood. 
+We illustrate parameter learning with the simple circuit structure we built, but with different weights.
+To modify the weights, simply change the `weights` vector of the root (sum) node:
+```julia
+f.weights .= [0.4, 0.3, 0.2, 0.1]
+```
+We will use that circuit as ground truth (the targer distribution) and use it to generate a data sample of size `N=1000`.
 ```julia
 using Random
 
 Random.seed!(42) # Locking seed
 
-# Construct the structure of the target distribution
-a, na, b, nb = Indicator(1, 1.0), Indicator(1, 0.), Indicator(2, 1.), Indicator(2, 0.)
-P1, P2, P3, P4 = Product([a,b]), Product([a,nb]), Product([na,b]), Product([na,nb])
-f = Sum([P1, P2, P3, P4], [0.4, 0.3, 0.2, 0.1])
-
-# Sample N samples from it
+# Sample N samples from circuit f
 N = 1_000
 D = rand(f, N)
 ```
 
-We shall now build a new circuit `g` whose structure is the same as `f` but whose weights are set
-to uniform. Ideally, when learning from the dataset `D`, we want `g`'s weights to change to be
-(approximately) equal to `f`'s.
+We now build a new circuit `g` whose structure is the same as `f` but whose weights are set
+to uniform. Ideally, when learning from the dataset `D`, we want `g`'s weights to approximate that of `f`'s.
 ```julia
 # Let's copy the same structure as f, but set its weights to a uniform
 g = copy(f)
-g.weights .= [0.25,0.25,0.25,0.25]
+g.weights .= 0.25*ones(4)
 ```
 
 Now that we have our distribution `g`, we are ready to fit it to the data `D`. We'll do this by
@@ -165,6 +169,14 @@ a look at the linked Julia docs. To install all dependencies,
    ```julia
    add /path/to/RPCircuits
    ```
+
+If step 5 is not taken, you will need to activate the package enviroment every time you start a new Julia session or 
+run a program from shell. To activate the RPCircuits environment from a Julia program add the following to the beggining
+
+```julia
+using Pkg
+Pkg.activate("/path/to/RPCircuits")
+```
 
 ## Troubleshooting
 
