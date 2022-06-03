@@ -1,3 +1,5 @@
+<img align="right" width="180px" src="logo.png">
+
 RPCircuits.jl
 =============
 
