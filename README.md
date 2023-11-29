@@ -22,9 +22,10 @@ Learning of Probabilistic Circuits][link_msc]".
 ## Quick Tutorial
 
 The package is currently not registered in Julia's general registry. 
-To use it, you need to clone this repository locally then either install it with 
-```bash
-julia -e 'using Pkg; Pkg.add("/path/to/RPCircuits")'
+To use it, you need to first clone this repository locally, then add the package with its relative
+path:
+```julia
+add /path/to/RPCircuits.jl
 ```
 
 Alternatively, you can use the package without installing by mannually activating its environment. 
